@@ -16,7 +16,7 @@ plus per-route status dots and live-templated icon colors.
 - Theme-aware: icons use `var(--primary-text-color)`, so they stay legible
   in both light and dark themes
 
-https://github.com/user-attachments/assets/PLACEHOLDER-DEMO-GIF
+https://github.com/donsebby/liquid-lens-navbar-card/blob/main/asset/demo.gif
 
 > Built for and tested against Home Assistant's `sections` dashboard type,
 > alongside [Bubble Card](https://github.com/Clooos/Bubble-Card) pop-ups
