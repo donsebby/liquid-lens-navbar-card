@@ -10,7 +10,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = '1.1.0';
+const CARD_VERSION = '1.2.0';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -213,8 +213,9 @@ class LiquidLensNavbarCard extends HTMLElement {
         }
         .lln-lens {
           position: absolute;
+          top: 0;
           width: 100px;
-          height: 60px;
+          height: 100%;
           border-radius: 999px;
           pointer-events: none;
           opacity: 0;
@@ -317,9 +318,7 @@ class LiquidLensNavbarCard extends HTMLElement {
       const clampedX = Math.min(Math.max(clientX, minX), maxX);
 
       const x = clampedX - rect.left - lensSize / 2;
-      const y = rect.height / 2 - lens.offsetHeight / 2;
       lens.style.left = `${x}px`;
-      lens.style.top = `${y}px`;
       lens.classList.add('active');
 
       updateHoverIndex(clampedX);
