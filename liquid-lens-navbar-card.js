@@ -10,7 +10,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = '1.0.0';
+const CARD_VERSION = '1.1.0';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -52,10 +52,29 @@ class LiquidLensNavbarCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._updateIconColors();
+    this._updateEditMode();
   }
 
   getCardSize() {
     return 1;
+  }
+
+  // Home Assistant's edit-mode wrapper (hui-card) exposes an `editMode`
+  // property. This card is `position: fixed` for the live dashboard, which
+  // leaves nothing visible inside the card's own box in the dashboard editor
+  // (the real content floats elsewhere on screen) - so in edit mode it's
+  // rendered in normal document flow instead, giving the editor real,
+  // visible content to display and select.
+  connectedCallback() {
+    this._updateEditMode();
+  }
+
+  _updateEditMode() {
+    if (!this._rendered) return;
+    const huiCard = this.closest('hui-card');
+    const editMode = !!(huiCard && huiCard.editMode) || !!this.closest('hui-card-edit-mode');
+    const wrap = this.querySelector('.lln-wrap');
+    if (wrap) wrap.classList.toggle('lln-editmode', editMode);
   }
 
   // Re-evaluates each route's icon_color template and each dot's color
@@ -116,12 +135,27 @@ class LiquidLensNavbarCard extends HTMLElement {
 
     this.innerHTML = `
       <style>
+        liquid-lens-navbar-card {
+          display: block;
+          min-height: 66px;
+        }
         .lln-wrap {
           position: fixed;
           bottom: 16px;
           left: 50%;
           transform: translateX(-50%);
           z-index: 8;
+        }
+        .lln-wrap.lln-editmode {
+          position: static;
+          left: auto;
+          bottom: auto;
+          transform: none;
+          display: flex;
+          justify-content: center;
+          padding: 12px;
+          background: rgba(255, 255, 255, 0.03);
+          border-radius: 16px;
         }
         .lln-bar {
           position: relative;
@@ -331,6 +365,7 @@ class LiquidLensNavbarCard extends HTMLElement {
     });
 
     this._updateIconColors();
+    this._updateEditMode();
   }
 
   _handleAction(route) {
