@@ -10,7 +10,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = '1.2.0';
+const CARD_VERSION = '1.3.0';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -133,6 +133,23 @@ class LiquidLensNavbarCard extends HTMLElement {
 
     const routes = this.config.routes;
 
+    // Sizing knobs - all optional, all in px, and all default to the
+    // card's original fixed values so existing configs render exactly
+    // as before unless these are set explicitly.
+    //   icon_size   - size of the ha-icon inside each button (default 24)
+    //   item_gap    - gap between buttons in the bar (default 4)
+    //   button_size - width/height of each tap target (default 54)
+    //   lens_width  - width of the tracking lens; defaults to
+    //                 button_size + item_gap * 2 so it keeps covering
+    //                 one button's worth of space as those two change
+    // Raising item_gap and/or button_size is the fix for icons sitting
+    // too close together / being hard to hit accurately on narrow
+    // screens or with many routes.
+    const iconSize = this.config.icon_size ?? 24;
+    const itemGap = this.config.item_gap ?? 4;
+    const buttonSize = this.config.button_size ?? 54;
+    const lensWidth = this.config.lens_width ?? buttonSize + itemGap * 2;
+
     this.innerHTML = `
       <style>
         liquid-lens-navbar-card {
@@ -160,7 +177,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         .lln-bar {
           position: relative;
           display: flex;
-          gap: 4px;
+          gap: ${itemGap}px;
           padding: 8px 14px;
           border-radius: 999px;
           background: rgba(255, 255, 255, 0.02);
@@ -178,8 +195,8 @@ class LiquidLensNavbarCard extends HTMLElement {
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          width: 54px;
-          height: 54px;
+          width: ${buttonSize}px;
+          height: ${buttonSize}px;
           border-radius: 999px;
           color: var(--primary-text-color, rgba(255, 255, 255, 0.85));
           cursor: pointer;
@@ -191,7 +208,7 @@ class LiquidLensNavbarCard extends HTMLElement {
           background: rgba(255, 255, 255, 0.08);
         }
         .lln-btn ha-icon {
-          --mdc-icon-size: 24px;
+          --mdc-icon-size: ${iconSize}px;
         }
         .lln-label {
           font-size: 9px;
@@ -214,7 +231,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         .lln-lens {
           position: absolute;
           top: 0;
-          width: 100px;
+          width: ${lensWidth}px;
           height: 100%;
           border-radius: 999px;
           pointer-events: none;
@@ -323,6 +340,7 @@ class LiquidLensNavbarCard extends HTMLElement {
 
       updateHoverIndex(clampedX);
     };
+
     const hideLens = () => {
       lens.classList.remove('active');
       lastHoverIndex = null;
@@ -332,6 +350,7 @@ class LiquidLensNavbarCard extends HTMLElement {
       if (!dragging) return;
       moveLens(e.clientX, e.clientY);
     };
+
     // A real pointerup: whatever icon the lens is currently over wins
     // (it was already "activated" live in updateHoverIndex as it passed
     // over each icon, so this just ends the gesture).
@@ -342,6 +361,7 @@ class LiquidLensNavbarCard extends HTMLElement {
       document.removeEventListener('pointerup', onDocPointerUp);
       document.removeEventListener('pointercancel', onDocPointerCancel);
     };
+
     // A cancelled gesture (e.g. the OS interrupts the touch) intentionally
     // does NOT trigger whatever icon was last under the lens.
     const onDocPointerCancel = () => {
