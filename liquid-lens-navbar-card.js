@@ -44,11 +44,16 @@
  * on every state change anywhere in Home Assistant, not just for entities
  * this card cares about).
  *
+ * `value_entity` state text is rendered through `hass.formatEntityState`,
+ * so it shows in the dashboard's configured language (e.g. "Ein"/"Aus")
+ * instead of the raw English state string, with a safe fallback for
+ * older cores that don't expose that helper.
+ *
  * https://github.com/donsebby/liquid-lens-navbar-card
  * License: MIT
  */
 
-const CARD_VERSION = '1.5.1';
+const CARD_VERSION = '1.5.2';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -294,8 +299,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         el.textContent = '';
         return;
       }
-      const unit = st.attributes && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : '';
-      el.textContent = unit ? `${st.state} ${unit}` : st.state;
+      el.textContent = this._formatValue(st);
       if (route.value_color) {
         const color = this._evalTemplate(route.value_color);
         el.style.color = color || '';
@@ -303,6 +307,25 @@ class LiquidLensNavbarCard extends HTMLElement {
         el.style.color = '';
       }
     });
+  }
+
+  // Displays the entity's state the way HA's own UI would (e.g. "Ein"/
+  // "Aus" instead of "on"/"off" under a German locale), by delegating to
+  // the frontend's own state-formatter, which already knows the user's
+  // language, the entity's device class, and any custom translations.
+  // Falls back to the raw state + unit on older cores that don't expose
+  // this helper on `hass` yet (added HA 2024.9), so this never throws.
+  _formatValue(stateObj) {
+    if (typeof this._hass.formatEntityState === 'function') {
+      try {
+        return this._hass.formatEntityState(stateObj);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('liquid-lens-navbar-card: formatEntityState failed, falling back to raw state', err);
+      }
+    }
+    const unit = stateObj.attributes && stateObj.attributes.unit_of_measurement ? stateObj.attributes.unit_of_measurement : '';
+    return unit ? `${stateObj.state} ${unit}` : stateObj.state;
   }
 
   // Supports two forms for icon / icon_color / value_color / pulse / dot
