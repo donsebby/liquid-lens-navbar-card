@@ -20,6 +20,7 @@
  * (same [[[ ... ]]] convention as icon_color) makes the icon pulse,
  * e.g. for a triggered alarm.
  *
+ *
  * Popups only load once the lens settles on an icon - navigation is
  * debounced by a short hover delay (`hover_delay`, default 130ms)
  * rather than firing on every icon the lens passes over while
@@ -37,11 +38,17 @@
  * block for `position: fixed`, and the bar ends up pinned over (and
  * blocking taps on) the dialog's Save button instead of the screen edge.
  *
+ * Templates (icon/icon_color/value_color/pulse/dots[].color) are compiled
+ * once per unique template string and cached on the instance, rather than
+ * re-parsed via `new Function(...)` on every `set hass` call (which fires
+ * on every state change anywhere in Home Assistant, not just for entities
+ * this card cares about).
+ *
  * https://github.com/donsebby/liquid-lens-navbar-card
  * License: MIT
  */
 
-const CARD_VERSION = '1.5.0';
+const CARD_VERSION = '1.5.1';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -308,20 +315,40 @@ class LiquidLensNavbarCard extends HTMLElement {
   //     null/undefined.
   //     Example: "[[[ return states['light.x'].state === 'on' ? '#FFD700' : null; ]]]"
   //     Example (pulse): "[[[ return states['alarm_control_panel.home'].state === 'triggered'; ]]]"
+  //
+  // Compiled functions are cached per template source string on the card
+  // instance, so a template is only ever passed through `new Function(...)`
+  // once no matter how many routes/dots reuse the same expression or how
+  // many hass updates come through afterward - `set hass` (and therefore
+  // this) fires on every state change anywhere in Home Assistant, so
+  // avoiding a recompile on each of those calls is what keeps this cheap
+  // as the number of templated routes grows.
   _evalTemplate(template) {
     const match = /^\s*\[\[\[([\s\S]*)\]\]\]\s*$/.exec(template);
     if (!match) return template;
+    if (!this._templateFnCache) this._templateFnCache = new Map();
+    let fn = this._templateFnCache.get(template);
+    if (fn === undefined) {
+      try {
+        // eslint-disable-next-line no-new-func
+        fn = new Function('states', 'hass', match[1]);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('liquid-lens-navbar-card: template compile error', err);
+        fn = null;
+      }
+      this._templateFnCache.set(template, fn);
+    }
+    if (!fn) return null;
     try {
-      const states = this._hass.states;
-      // eslint-disable-next-line no-new-func
-      const fn = new Function('states', 'hass', match[1]);
-      return fn(states, this._hass);
+      return fn(this._hass.states, this._hass);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('liquid-lens-navbar-card: template error', err);
       return null;
     }
   }
+
 
   // Templated icons can't be resolved until `hass` is available, which
   // may be a beat after the first render. Show a neutral placeholder

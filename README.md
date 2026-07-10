@@ -270,6 +270,16 @@ only ever navigate on release. See
 
 ## Changelog
 
+### v1.5.1
+
+- **Template caching**: templates for `icon`, `icon_color`, `value_color`,
+  `pulse`, and `dots[].color` are now compiled once per unique template
+  string and cached on the card instance, instead of being re-parsed via
+  `new Function(...)` on every `set hass` call (which fires on every state
+  change anywhere in Home Assistant, not just for entities this card
+  cares about). No functional change, just less repeated work as the
+  number of templated routes grows.
+
 ### v1.5.0
 
 - **Scrollable bar**: new `max_width` option caps the bar's width; routes
