@@ -75,6 +75,31 @@ but keeping it last avoids confusing the visual editor.
 | ------------- | ------- | -------- | ---------------------------------------------------------------------------- |
 | `routes`      | array   | yes      | The icons in the bar, in order. See below.                                   |
 | `hide_labels` | boolean | no       | Hide the text label under every icon (default: `false`, labels shown).       |
+| `icon_size`   | number  | no       | Size of the icon inside each button, in px (default: `24`).                  |
+| `item_gap`    | number  | no       | Gap between buttons in the bar, in px (default: `4`).                        |
+| `button_size` | number  | no       | Width/height of each tap target, in px (default: `54`).                      |
+| `lens_width`  | number  | no       | Width of the tracking lens, in px (default: `button_size + item_gap * 2`).   |
+
+If icons feel cramped or hard to hit accurately (common on narrow phone
+screens or with many routes), raise `item_gap` and/or `button_size`:
+
+```yaml
+type: custom:liquid-lens-navbar-card
+icon_size: 26
+item_gap: 10
+button_size: 62
+routes:
+  - icon: mdi:home
+    label: Home
+    tap_action:
+      action: navigate
+      navigation_path: "#home"
+```
+
+`lens_width` usually doesn't need to be set manually — it auto-scales
+with `button_size` and `item_gap` so the lens keeps covering one
+button's worth of space. Only override it if the lens visually looks
+too narrow/wide after changing the other two.
 
 ### Route object
 
