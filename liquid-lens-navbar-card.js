@@ -3,14 +3,14 @@
  * ------------------------
  * A bottom navigation bar for Home Assistant dashboards with an
  * iOS-26-style "liquid glass" lens that follows your finger as you
- * drag across the bar, plus optional per-route status dots and
- * JS-templated icon colors.
+ * drag across the bar, plus optional per-route status dots, a live
+ * value readout per route, and JS-templated icon symbols/colors.
  *
- * https://github.com/<your-username>/liquid-lens-navbar-card
+ * https://github.com/donsebby/liquid-lens-navbar-card
  * License: MIT
  */
 
-const CARD_VERSION = '1.3.0';
+const CARD_VERSION = '1.4.0';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -49,9 +49,75 @@ class LiquidLensNavbarCard extends HTMLElement {
     };
   }
 
+  // Built-in HA form editor for the card-level sizing options. `routes`
+  // stays YAML-only - each route can carry a tap_action object, JS
+  // templates for icon/icon_color, a value_entity, and a dots array,
+  // which doesn't map cleanly onto ha-form's selector types. This form
+  // covers the options that fix "icons too close together" (the most
+  // reported pain point), so most users never need to leave the visual
+  // editor to get that fixed.
+  static getConfigForm() {
+    return {
+      schema: [
+        { name: 'hide_labels', selector: { boolean: {} } },
+        {
+          type: 'grid',
+          name: '',
+          schema: [
+            {
+              name: 'icon_size',
+              selector: { number: { min: 16, max: 40, step: 1, mode: 'slider', unit_of_measurement: 'px' } },
+            },
+            {
+              name: 'item_gap',
+              selector: { number: { min: 0, max: 24, step: 1, mode: 'slider', unit_of_measurement: 'px' } },
+            },
+            {
+              name: 'button_size',
+              selector: { number: { min: 36, max: 72, step: 1, mode: 'slider', unit_of_measurement: 'px' } },
+            },
+            {
+              name: 'lens_width',
+              selector: { number: { min: 40, max: 120, step: 1, mode: 'slider', unit_of_measurement: 'px' } },
+            },
+          ],
+        },
+      ],
+      computeLabel: (schema) => {
+        switch (schema.name) {
+          case 'hide_labels':
+            return 'Hide labels';
+          case 'icon_size':
+            return 'Icon size';
+          case 'item_gap':
+            return 'Gap between icons';
+          case 'button_size':
+            return 'Tap target size';
+          case 'lens_width':
+            return 'Lens width';
+        }
+        return undefined;
+      },
+      computeHelper: (schema) => {
+        switch (schema.name) {
+          case 'item_gap':
+            return 'Raise this if icons are hard to hit accurately (default: 4px)';
+          case 'button_size':
+            return 'Width/height of each tap target (default: 54px)';
+          case 'lens_width':
+            return 'Leave empty to auto-size from tap target + gap. Set explicitly for a more pill-shaped lens.';
+          case 'icon_size':
+            return 'Default: 24px';
+        }
+        return undefined;
+      },
+    };
+  }
+
   set hass(hass) {
     this._hass = hass;
     this._updateIconColors();
+    this._updateValues();
     this._updateEditMode();
   }
 
@@ -77,15 +143,25 @@ class LiquidLensNavbarCard extends HTMLElement {
     if (wrap) wrap.classList.toggle('lln-editmode', editMode);
   }
 
-  // Re-evaluates each route's icon_color template and each dot's color
-  // template against the latest hass state, and applies the results.
+  // Re-evaluates each route's icon template/icon_color template and each
+  // dot's color template against the latest hass state, and applies the
+  // results. The icon itself (not just its color) can now be a JS
+  // template too - e.g. picking a weather icon based on a weather
+  // entity's condition.
   _updateIconColors() {
     if (!this._hass || !this._rendered || !this.config) return;
     this.config.routes.forEach((route, i) => {
+      if (route.icon) {
+        const iconEl = this.querySelector(`.lln-btn[data-index="${i}"] ha-icon`);
+        if (iconEl) {
+          const resolvedIcon = this._evalTemplate(route.icon);
+          if (resolvedIcon) iconEl.setAttribute('icon', resolvedIcon);
+        }
+      }
       if (route.icon_color) {
         const icon = this.querySelector(`.lln-btn[data-index="${i}"] ha-icon`);
         if (icon) {
-          const color = this._evalIconColor(route.icon_color);
+          const color = this._evalTemplate(route.icon_color);
           icon.style.color = color || '';
         }
       }
@@ -93,7 +169,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         route.dots.forEach((dot, j) => {
           const dotEl = this.querySelector(`.lln-btn[data-index="${i}"] .lln-dot[data-dot="${j}"]`);
           if (!dotEl || !dot || !dot.color) return;
-          const color = this._evalIconColor(dot.color);
+          const color = this._evalTemplate(dot.color);
           if (color) {
             dotEl.style.background = color;
             dotEl.style.boxShadow = `0 0 4px ${color}`;
@@ -106,13 +182,34 @@ class LiquidLensNavbarCard extends HTMLElement {
     });
   }
 
-  // Supports two forms for icon_color / dot color:
-  //   - a plain CSS color string, e.g. "#FFD700"
+  // Renders a small live text readout under an icon, driven by an
+  // entity's current state - e.g. showing current solar production
+  // wattage next to a Solar icon, the same way a dashboard badge would.
+  _updateValues() {
+    if (!this._hass || !this._rendered || !this.config) return;
+    this.config.routes.forEach((route, i) => {
+      if (!route.value_entity) return;
+      const el = this.querySelector(`.lln-value[data-index="${i}"]`);
+      if (!el) return;
+      const st = this._hass.states[route.value_entity];
+      if (!st) {
+        el.textContent = '';
+        return;
+      }
+      const unit = st.attributes && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : '';
+      el.textContent = unit ? `${st.state} ${unit}` : st.state;
+    });
+  }
+
+  // Supports two forms for icon / icon_color / dot color:
+  //   - a plain string, e.g. "mdi:lightbulb" or "#FFD700"
   //   - a JS template wrapped in [[[ ... ]]], evaluated with `states`
   //     (an object keyed by entity_id, mirroring hass.states) and
-  //     `hass` in scope. Must `return` a color string or null/undefined.
+  //     `hass` in scope. Must `return` a string (an mdi icon name or a
+  //     CSS color, depending on the field) or null/undefined.
   //     Example: "[[[ return states['light.x'].state === 'on' ? '#FFD700' : null; ]]]"
-  _evalIconColor(template) {
+  //     Example: "[[[ return states['weather.home'].state === 'rainy' ? 'mdi:weather-rainy' : 'mdi:weather-sunny'; ]]]"
+  _evalTemplate(template) {
     const match = /^\s*\[\[\[([\s\S]*)\]\]\]\s*$/.exec(template);
     if (!match) return template;
     try {
@@ -122,9 +219,19 @@ class LiquidLensNavbarCard extends HTMLElement {
       return fn(states, this._hass);
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('liquid-lens-navbar-card: icon_color template error', err);
+      console.error('liquid-lens-navbar-card: template error', err);
       return null;
     }
+  }
+
+  // Templated icons can't be resolved until `hass` is available, which
+  // may be a beat after the first render. Show a neutral placeholder
+  // instead of literally printing the "[[[ ... ]]]" template string as
+  // the icon name; _updateIconColors() swaps in the real icon as soon
+  // as hass arrives (it's already called at the end of every _render()
+  // and on every `set hass`).
+  _initialIcon(route) {
+    return /^\s*\[\[\[/.test(route.icon || '') ? 'mdi:help-circle-outline' : route.icon;
   }
 
   _render() {
@@ -216,6 +323,17 @@ class LiquidLensNavbarCard extends HTMLElement {
           opacity: 0.8;
           white-space: nowrap;
         }
+        .lln-value {
+          margin-top: 1px;
+          height: 5px;
+          line-height: 5px;
+          font-size: 8px;
+          opacity: 0.85;
+          white-space: nowrap;
+          font-variant-numeric: tabular-nums;
+          pointer-events: none;
+          overflow: visible;
+        }
         .lln-dots {
           display: flex;
           gap: 3px;
@@ -267,8 +385,9 @@ class LiquidLensNavbarCard extends HTMLElement {
             .map(
               (r, i) => `
             <button class="lln-btn" data-index="${i}" aria-label="${r.label || r.icon}">
-              <ha-icon icon="${r.icon}"></ha-icon>
+              <ha-icon icon="${this._initialIcon(r)}"></ha-icon>
               ${r.label && !this.config.hide_labels ? `<span class="lln-label">${r.label}</span>` : ''}
+              ${r.value_entity ? `<span class="lln-value" data-index="${i}"></span>` : ''}
               ${
                 Array.isArray(r.dots)
                   ? `<div class="lln-dots">${r.dots.map((_, j) => `<span class="lln-dot" data-dot="${j}"></span>`).join('')}</div>`
@@ -384,6 +503,7 @@ class LiquidLensNavbarCard extends HTMLElement {
     });
 
     this._updateIconColors();
+    this._updateValues();
     this._updateEditMode();
   }
 
@@ -416,5 +536,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'liquid-lens-navbar-card',
   name: 'Liquid Lens Navbar Card',
-  description: 'A bottom navbar with an iOS-26-style liquid glass lens that follows your finger, plus per-route status dots and templated icon colors.',
+  description: 'A bottom navbar with an iOS-26-style liquid glass lens that follows your finger, plus per-route status dots, a live value readout, and JS-templated icon symbols/colors. Sizing options have a visual editor.',
 });
