@@ -101,15 +101,41 @@ with `button_size` and `item_gap` so the lens keeps covering one
 button's worth of space. Only override it if the lens visually looks
 too narrow/wide after changing the other two.
 
+### Visual editor
+
+`hide_labels`, `icon_size`, `item_gap`, `button_size` and `lens_width`
+can all be set through Home Assistant's built-in card editor (no YAML
+needed) — edit the card in the dashboard UI and the sliders show up
+under the card settings.
+
+`routes` (and everything inside each route — icon, label, tap_action,
+icon_color, dots, value_entity) is YAML-only for now. Each route can
+carry JS templates and a nested action object, which doesn't map
+cleanly onto the visual editor's field types, so route editing still
+goes through the card's YAML mode.
+
 ### Route object
 
-| Option        | Type   | Required | Description                                                                     |
-| ------------- | ------ | -------- | -------------------------------------------------------------------------------- |
-| `icon`        | string | yes      | Any `mdi:` icon name.                                                            |
-| `label`       | string | no       | Text under the icon. Ignored per-route if `hide_labels: true` on the card.       |
-| `tap_action`  | object | no       | `navigate` or `call-service`/`perform-action`. See below.                        |
-| `icon_color`  | string | no       | A CSS color, or a `[[[ ... ]]]` JS template. See "Templates" below.              |
-| `dots`        | array  | no       | Small status dots rendered under the icon. Each item: `{ color: <template> }`.   |
+| Option         | Type   | Required | Description                                                                     |
+| -------------- | ------ | -------- | -------------------------------------------------------------------------------- |
+| `icon`         | string | yes      | Any `mdi:` icon name, or a `[[[ ... ]]]` JS template. See "Templates" below.     |
+| `label`        | string | no       | Text under the icon. Ignored per-route if `hide_labels: true` on the card.       |
+| `tap_action`   | object | no       | `navigate` or `call-service`/`perform-action`. See below.                        |
+| `icon_color`   | string | no       | A CSS color, or a `[[[ ... ]]]` JS template. See "Templates" below.              |
+| `dots`         | array  | no       | Small status dots rendered under the icon. Each item: `{ color: <template> }`.   |
+| `value_entity` | string | no       | An entity ID; its state (+ unit, if any) renders as a small live text line below the icon, e.g. a wattage readout next to a "Solar" icon. |
+
+`value_entity` example:
+
+```yaml
+routes:
+  - icon: mdi:solar-power
+    label: Solar
+    tap_action:
+      action: navigate
+      navigation_path: "#solar-popup"
+    value_entity: sensor.solar_current_power   # renders e.g. "1.4 kW" under the icon
+```
 
 ### `tap_action`
 
@@ -132,19 +158,32 @@ tap_action:
   service_data: {}          # optional
 ```
 
-### Templates (`icon_color` and `dots[].color`)
+### Templates (`icon`, `icon_color`, and `dots[].color`)
 
-Both accept either a plain CSS color string, or a JS expression wrapped in
+All three accept either a plain string (an `mdi:` icon name for `icon`,
+a CSS color for the other two), or a JS expression wrapped in
 `[[[ ... ]]]` and evaluated live against `hass.states` on every state
 change. `states` is a plain object keyed by `entity_id`, mirroring
 `hass.states` — **not** a Jinja/Python template, this is JavaScript.
+
+Templated icon — pick the mdi icon itself based on an entity's state,
+e.g. a weather condition:
+
+```yaml
+icon: "[[[ const c = states['weather.home'].state; if (c.includes('rain')) return 'mdi:weather-rainy'; if (c.includes('cloud')) return 'mdi:weather-cloudy'; return 'mdi:weather-sunny'; ]]]"
+```
+
+Templated color:
 
 ```yaml
 icon_color: "[[[ return states['alarm_control_panel.home'].state.startsWith('armed') ? '#F44336' : null; ]]]"
 ```
 
-Return `null`/`undefined`/`''` to fall back to the default color (theme
-text color for icons, neutral gray for dots).
+Return `null`/`undefined`/`''` from an `icon_color`/dot-color template to
+fall back to the default color (theme text color for icons, neutral
+gray for dots). An `icon` template should always return a valid `mdi:`
+name — until `hass` is available on first paint, the card shows a
+neutral placeholder icon rather than the raw template string.
 
 Multiple entities:
 
