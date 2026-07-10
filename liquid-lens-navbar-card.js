@@ -6,11 +6,42 @@
  * drag across the bar, plus optional per-route status dots, a live
  * value readout per route, and JS-templated icon symbols/colors.
  *
+ * The bar is capped to a max width per display (`max_width`, or
+ * `calc(100vw - 32px)` by default). If the routes don't fit, the bar
+ * becomes horizontally scrollable - drag the lens to the visible edge
+ * and the icon row keeps auto-scrolling underneath it, revealing more
+ * routes while the lens stays pinned to your finger at the edge.
+ * Releasing the drag snaps a partially-clipped edge route fully into
+ * view instead of leaving it half-cut-off.
+ *
+ * The route matching the current `location.hash` (or view path, for
+ * plain navigation targets) is highlighted persistently, independent
+ * of the drag-hover highlight. An optional `pulse` template per route
+ * (same [[[ ... ]]] convention as icon_color) makes the icon pulse,
+ * e.g. for a triggered alarm.
+ *
+ * Popups only load once the lens settles on an icon - navigation is
+ * debounced by a short hover delay (`hover_delay`, default 130ms)
+ * rather than firing on every icon the lens passes over while
+ * dragging. This avoids the jank of rapidly mounting/unmounting a
+ * popup for every icon crossed on a fast swipe (noticeable on iOS).
+ * Releasing the drag always finalizes navigation immediately,
+ * regardless of the delay. Setting `release_only: true` disables
+ * hover-triggered navigation entirely - popups then only ever open on
+ * release, never mid-drag.
+ *
+ * Edit-mode detection crosses shadow-DOM boundaries and checks for any
+ * enclosing dialog, so the fixed-position bar switches to normal
+ * document flow inside the card editor/preview - otherwise the
+ * editor dialog's own CSS transform turns it into the containing
+ * block for `position: fixed`, and the bar ends up pinned over (and
+ * blocking taps on) the dialog's Save button instead of the screen edge.
+ *
  * https://github.com/donsebby/liquid-lens-navbar-card
  * License: MIT
  */
 
-const CARD_VERSION = '1.4.0';
+const CARD_VERSION = '1.5.0';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -51,15 +82,16 @@ class LiquidLensNavbarCard extends HTMLElement {
 
   // Built-in HA form editor for the card-level sizing options. `routes`
   // stays YAML-only - each route can carry a tap_action object, JS
-  // templates for icon/icon_color, a value_entity, and a dots array,
-  // which doesn't map cleanly onto ha-form's selector types. This form
-  // covers the options that fix "icons too close together" (the most
-  // reported pain point), so most users never need to leave the visual
-  // editor to get that fixed.
+  // templates for icon/icon_color/value_color/pulse, a value_entity, and
+  // a dots array, which doesn't map cleanly onto ha-form's selector
+  // types. This form covers the options that fix "icons too close
+  // together" (the most reported pain point) plus the bar's max width,
+  // so most users never need to leave the visual editor to get those fixed.
   static getConfigForm() {
     return {
       schema: [
         { name: 'hide_labels', selector: { boolean: {} } },
+        { name: 'release_only', selector: { boolean: {} } },
         {
           type: 'grid',
           name: '',
@@ -80,6 +112,14 @@ class LiquidLensNavbarCard extends HTMLElement {
               name: 'lens_width',
               selector: { number: { min: 40, max: 120, step: 1, mode: 'slider', unit_of_measurement: 'px' } },
             },
+            {
+              name: 'max_width',
+              selector: { number: { min: 200, max: 900, step: 10, mode: 'slider', unit_of_measurement: 'px' } },
+            },
+            {
+              name: 'hover_delay',
+              selector: { number: { min: 0, max: 400, step: 10, mode: 'slider', unit_of_measurement: 'ms' } },
+            },
           ],
         },
       ],
@@ -87,6 +127,8 @@ class LiquidLensNavbarCard extends HTMLElement {
         switch (schema.name) {
           case 'hide_labels':
             return 'Hide labels';
+          case 'release_only':
+            return 'Only navigate on release';
           case 'icon_size':
             return 'Icon size';
           case 'item_gap':
@@ -95,6 +137,10 @@ class LiquidLensNavbarCard extends HTMLElement {
             return 'Tap target size';
           case 'lens_width':
             return 'Lens width';
+          case 'max_width':
+            return 'Max bar width';
+          case 'hover_delay':
+            return 'Popup delay';
         }
         return undefined;
       },
@@ -108,6 +154,12 @@ class LiquidLensNavbarCard extends HTMLElement {
             return 'Leave empty to auto-size from tap target + gap. Set explicitly for a more pill-shaped lens.';
           case 'icon_size':
             return 'Default: 24px';
+          case 'max_width':
+            return 'Leave empty to fill the screen width. If routes overflow this, the bar scrolls horizontally - drag the lens to the edge to keep scrolling.';
+          case 'hover_delay':
+            return 'How long the lens must sit on an icon before its popup loads (default: 130ms). Higher = smoother fast swipes, lower = snappier. Ignored if "Only navigate on release" is on.';
+          case 'release_only':
+            return 'Popups never open mid-drag, only when you lift your finger off an icon. Overrides the popup delay above.';
         }
         return undefined;
       },
@@ -135,35 +187,70 @@ class LiquidLensNavbarCard extends HTMLElement {
     this._updateEditMode();
   }
 
+  // Element.closest() does not cross shadow-DOM boundaries, but Home
+  // Assistant's card editor (and its live preview) nests this card several
+  // shadow roots deep. Walk up via parentElement and, once we run out,
+  // hop to the enclosing shadow root's host - this is the standard trick
+  // for a "closest that crosses shadow boundaries".
+  _closestAcrossShadow(selector) {
+    let node = this;
+    while (node) {
+      if (node instanceof Element && node.matches && node.matches(selector)) return node;
+      node = node.parentElement || (node.getRootNode && node.getRootNode().host) || null;
+    }
+    return null;
+  }
+
   _updateEditMode() {
     if (!this._rendered) return;
-    const huiCard = this.closest('hui-card');
-    const editMode = !!(huiCard && huiCard.editMode) || !!this.closest('hui-card-edit-mode');
+    const huiCard = this._closestAcrossShadow('hui-card');
+    // Any of these ancestors means we're inside the card picker/editor
+    // (including its live preview), not the real live dashboard - most
+    // importantly `ha-dialog`, since the editor dialog applies a CSS
+    // transform for its open/close animation, which turns it into the
+    // containing block for `position: fixed` descendants. Without this
+    // check the bar renders pinned to the *dialog's* edge instead of the
+    // screen's, landing on top of (and swallowing taps on) the dialog's
+    // own Save/Cancel buttons.
+    const editMode =
+      !!(huiCard && huiCard.editMode) ||
+      !!this._closestAcrossShadow('hui-card-edit-mode') ||
+      !!this._closestAcrossShadow('hui-dialog-edit-card') ||
+      !!this._closestAcrossShadow('hui-card-preview') ||
+      !!this._closestAcrossShadow('ha-dialog') ||
+      !!this._closestAcrossShadow('[preview]');
     const wrap = this.querySelector('.lln-wrap');
     if (wrap) wrap.classList.toggle('lln-editmode', editMode);
   }
 
-  // Re-evaluates each route's icon template/icon_color template and each
-  // dot's color template against the latest hass state, and applies the
-  // results. The icon itself (not just its color) can now be a JS
-  // template too - e.g. picking a weather icon based on a weather
-  // entity's condition.
+  // Re-evaluates each route's icon template/icon_color template, each
+  // dot's color template, and the optional pulse template, against the
+  // latest hass state, and applies the results. The icon itself (not
+  // just its color) can be a JS template too - e.g. picking a weather
+  // icon based on a weather entity's condition.
   _updateIconColors() {
     if (!this._hass || !this._rendered || !this.config) return;
     this.config.routes.forEach((route, i) => {
+      const btn = this.querySelector(`.lln-btn[data-index="${i}"]`);
       if (route.icon) {
-        const iconEl = this.querySelector(`.lln-btn[data-index="${i}"] ha-icon`);
+        const iconEl = btn && btn.querySelector('ha-icon');
         if (iconEl) {
           const resolvedIcon = this._evalTemplate(route.icon);
           if (resolvedIcon) iconEl.setAttribute('icon', resolvedIcon);
         }
       }
       if (route.icon_color) {
-        const icon = this.querySelector(`.lln-btn[data-index="${i}"] ha-icon`);
+        const icon = btn && btn.querySelector('ha-icon');
         if (icon) {
           const color = this._evalTemplate(route.icon_color);
           icon.style.color = color || '';
         }
+      }
+      if (route.pulse && btn) {
+        const shouldPulse = this._evalTemplate(route.pulse);
+        btn.classList.toggle('lln-pulsing', !!shouldPulse);
+      } else if (btn) {
+        btn.classList.remove('lln-pulsing');
       }
       if (Array.isArray(route.dots)) {
         route.dots.forEach((dot, j) => {
@@ -185,6 +272,10 @@ class LiquidLensNavbarCard extends HTMLElement {
   // Renders a small live text readout under an icon, driven by an
   // entity's current state - e.g. showing current solar production
   // wattage next to a Solar icon, the same way a dashboard badge would.
+  // Optional `value_color` on the route follows the same plain-string-or-
+  // [[[ template ]]] convention as icon_color/dots[].color, so the text
+  // itself can be recolored based on the value (e.g. black at 0, a color
+  // once it's above a threshold).
   _updateValues() {
     if (!this._hass || !this._rendered || !this.config) return;
     this.config.routes.forEach((route, i) => {
@@ -198,17 +289,25 @@ class LiquidLensNavbarCard extends HTMLElement {
       }
       const unit = st.attributes && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : '';
       el.textContent = unit ? `${st.state} ${unit}` : st.state;
+      if (route.value_color) {
+        const color = this._evalTemplate(route.value_color);
+        el.style.color = color || '';
+      } else {
+        el.style.color = '';
+      }
     });
   }
 
-  // Supports two forms for icon / icon_color / dot color:
+  // Supports two forms for icon / icon_color / value_color / pulse / dot
+  // color:
   //   - a plain string, e.g. "mdi:lightbulb" or "#FFD700"
   //   - a JS template wrapped in [[[ ... ]]], evaluated with `states`
   //     (an object keyed by entity_id, mirroring hass.states) and
   //     `hass` in scope. Must `return` a string (an mdi icon name or a
-  //     CSS color, depending on the field) or null/undefined.
+  //     CSS color, depending on the field), a boolean (for `pulse`), or
+  //     null/undefined.
   //     Example: "[[[ return states['light.x'].state === 'on' ? '#FFD700' : null; ]]]"
-  //     Example: "[[[ return states['weather.home'].state === 'rainy' ? 'mdi:weather-rainy' : 'mdi:weather-sunny'; ]]]"
+  //     Example (pulse): "[[[ return states['alarm_control_panel.home'].state === 'triggered'; ]]]"
   _evalTemplate(template) {
     const match = /^\s*\[\[\[([\s\S]*)\]\]\]\s*$/.exec(template);
     if (!match) return template;
@@ -234,6 +333,26 @@ class LiquidLensNavbarCard extends HTMLElement {
     return /^\s*\[\[\[/.test(route.icon || '') ? 'mdi:help-circle-outline' : route.icon;
   }
 
+  // Whether a route's navigate target matches the current location -
+  // hash-based popups compare against location.hash, plain view
+  // navigation compares against the pathname (also matching sub-paths,
+  // so a view path stays "active" while a hash popup is open on top of it).
+  _isRouteActive(route) {
+    const action = route.tap_action;
+    if (!action || action.action !== 'navigate' || !action.navigation_path) return false;
+    const path = action.navigation_path;
+    if (path.startsWith('#')) return window.location.hash === path;
+    return window.location.pathname === path || window.location.pathname.startsWith(`${path}/`);
+  }
+
+  _updateActiveRoute() {
+    if (!this._rendered || !this.config) return;
+    this.config.routes.forEach((route, i) => {
+      const btn = this.querySelector(`.lln-btn[data-index="${i}"]`);
+      if (btn) btn.classList.toggle('lln-btn-active', this._isRouteActive(route));
+    });
+  }
+
   _render() {
     if (this._rendered) return;
     this._rendered = true;
@@ -249,6 +368,10 @@ class LiquidLensNavbarCard extends HTMLElement {
     //   lens_width  - width of the tracking lens; defaults to
     //                 button_size + item_gap * 2 so it keeps covering
     //                 one button's worth of space as those two change
+    //   max_width   - max width of the visible bar "window". If the
+    //                 routes overflow this, the window becomes
+    //                 horizontally scrollable (default: fills the
+    //                 screen minus a small margin, via calc(100vw - 32px))
     // Raising item_gap and/or button_size is the fix for icons sitting
     // too close together / being hard to hit accurately on narrow
     // screens or with many routes.
@@ -256,10 +379,11 @@ class LiquidLensNavbarCard extends HTMLElement {
     const itemGap = this.config.item_gap ?? 4;
     const buttonSize = this.config.button_size ?? 54;
     const lensWidth = this.config.lens_width ?? buttonSize + itemGap * 2;
+    const maxWidthCss = this.config.max_width ? `${this.config.max_width}px` : 'calc(100vw - 32px)';
 
     this.innerHTML = `
       <style>
-        liquid-lens-navbar-card {
+        :host {
           display: block;
           min-height: 66px;
         }
@@ -281,11 +405,13 @@ class LiquidLensNavbarCard extends HTMLElement {
           background: rgba(255, 255, 255, 0.03);
           border-radius: 16px;
         }
-        .lln-bar {
+        .lln-scroll {
           position: relative;
-          display: flex;
-          gap: ${itemGap}px;
-          padding: 8px 14px;
+          max-width: ${maxWidthCss};
+          overflow-x: auto;
+          overflow-y: hidden;
+          overscroll-behavior-x: contain;
+          scroll-behavior: auto;
           border-radius: 999px;
           background: rgba(255, 255, 255, 0.02);
           backdrop-filter: blur(12px) saturate(180%);
@@ -295,10 +421,22 @@ class LiquidLensNavbarCard extends HTMLElement {
           touch-action: none;
           -webkit-user-select: none;
           user-select: none;
+          scrollbar-width: none;
+        }
+        .lln-scroll::-webkit-scrollbar {
+          display: none;
+        }
+        .lln-bar {
+          position: relative;
+          display: flex;
+          gap: ${itemGap}px;
+          padding: 8px 14px;
+          width: max-content;
         }
         .lln-btn {
           all: unset;
           display: flex;
+          flex: none;
           flex-direction: column;
           align-items: center;
           justify-content: center;
@@ -309,13 +447,24 @@ class LiquidLensNavbarCard extends HTMLElement {
           cursor: pointer;
           position: relative;
           z-index: 2;
-          transition: background 0.15s ease;
+          transition: background 0.15s ease, color 0.15s ease;
         }
         .lln-btn:active {
           background: rgba(255, 255, 255, 0.08);
         }
+        .lln-btn.lln-btn-active {
+          background: color-mix(in srgb, var(--primary-color, #7c3aed) 16%, transparent);
+          color: var(--primary-color, #7c3aed);
+        }
         .lln-btn ha-icon {
           --mdc-icon-size: ${iconSize}px;
+        }
+        .lln-btn.lln-pulsing ha-icon {
+          animation: lln-pulse 1s ease-in-out infinite;
+        }
+        @keyframes lln-pulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.2); opacity: 0.7; }
         }
         .lln-label {
           font-size: 9px;
@@ -380,46 +529,71 @@ class LiquidLensNavbarCard extends HTMLElement {
         }
       </style>
       <div class="lln-wrap">
-        <div class="lln-bar" id="lln-bar">
-          ${routes
-            .map(
-              (r, i) => `
-            <button class="lln-btn" data-index="${i}" aria-label="${r.label || r.icon}">
-              <ha-icon icon="${this._initialIcon(r)}"></ha-icon>
-              ${r.label && !this.config.hide_labels ? `<span class="lln-label">${r.label}</span>` : ''}
-              ${r.value_entity ? `<span class="lln-value" data-index="${i}"></span>` : ''}
-              ${
-                Array.isArray(r.dots)
-                  ? `<div class="lln-dots">${r.dots.map((_, j) => `<span class="lln-dot" data-dot="${j}"></span>`).join('')}</div>`
-                  : ''
-              }
-            </button>
-          `
-            )
-            .join('')}
-          <div class="lln-lens" id="lln-lens"></div>
+        <div class="lln-scroll" id="lln-scroll">
+          <div class="lln-bar" id="lln-bar">
+            ${routes
+              .map(
+                (r, i) => `
+              <button class="lln-btn" data-index="${i}" aria-label="${r.label || r.icon}">
+                <ha-icon icon="${this._initialIcon(r)}"></ha-icon>
+                ${r.label && !this.config.hide_labels ? `<span class="lln-label">${r.label}</span>` : ''}
+                ${r.value_entity ? `<span class="lln-value" data-index="${i}"></span>` : ''}
+                ${
+                  Array.isArray(r.dots)
+                    ? `<div class="lln-dots">${r.dots.map((_, j) => `<span class="lln-dot" data-dot="${j}"></span>`).join('')}</div>`
+                    : ''
+                }
+              </button>
+            `
+              )
+              .join('')}
+            <div class="lln-lens" id="lln-lens"></div>
+          </div>
         </div>
       </div>
     `;
 
+    const scrollEl = this.querySelector('#lln-scroll');
     const bar = this.querySelector('#lln-bar');
     const lens = this.querySelector('#lln-lens');
     let dragging = false;
     let lastHoverIndex = null;
-    let btnRects = [];
+    let pointerX = 0;
+    let pointerY = 0;
+    let rafId = null;
 
-    // How far above/below the bar the finger may wander and still count
-    // as "on" it — lets you drag slightly above the bar and still have
-    // the lens track along it, rather than requiring pixel-perfect contact.
+    // How close (in px) to the visible edge of the scroll window before
+    // auto-scroll kicks in, and the fastest it'll scroll (px/frame) once
+    // the pointer is pinned right at the edge.
+    const EDGE_ZONE = 36;
+    const MAX_SCROLL_SPEED = 14;
+    const SNAP_PADDING = 10;
     const VERTICAL_TOLERANCE_TOP = 90;
     const VERTICAL_TOLERANCE_BOTTOM = 40;
+    const HOVER_DWELL_MS = this.config.hover_delay ?? 130;
+    const RELEASE_ONLY = !!this.config.release_only;
+
+    let pendingTimer = null;
+    let pendingIndex = null;
+
+    const clearPending = () => {
+      if (pendingTimer) clearTimeout(pendingTimer);
+      pendingTimer = null;
+      pendingIndex = null;
+    };
 
     const fireHaptic = () => {
       this.dispatchEvent(new CustomEvent('haptic', { bubbles: true, composed: true, detail: 'selection' }));
       if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(8);
     };
 
-    const updateHoverIndex = (clientX) => {
+    // Haptic feedback still fires immediately on every icon the lens
+    // crosses (cheap, feels responsive) - but the actual navigation
+    // (which mounts/unmounts a popup) is debounced: it only fires once
+    // the lens has sat on the same icon for HOVER_DWELL_MS without
+    // moving to a different one. This is what stops a fast swipe from
+    // rapidly loading/unloading every popup in between.
+    const updateHoverIndex = (clientX, btnRects) => {
       let idx = null;
       for (let i = 0; i < btnRects.length; i++) {
         const r = btnRects[i];
@@ -430,81 +604,147 @@ class LiquidLensNavbarCard extends HTMLElement {
       }
       if (idx !== lastHoverIndex) {
         lastHoverIndex = idx;
+        clearPending();
         if (idx !== null) {
           fireHaptic();
-          this._handleAction(routes[idx]);
+          pendingIndex = idx;
+          if (!RELEASE_ONLY) {
+            pendingTimer = setTimeout(() => {
+              pendingTimer = null;
+              pendingIndex = null;
+              this._handleAction(routes[idx]);
+            }, HOVER_DWELL_MS);
+          }
         }
       }
     };
 
-    const moveLens = (clientX, clientY) => {
-      const rect = bar.getBoundingClientRect();
+    // Nudges scrollEl.scrollLeft toward revealing more routes whenever the
+    // pointer sits inside the edge zone, scaled by how deep into that zone
+    // it is. No-ops once there's nothing left to reveal in that direction.
+    const applyAutoScroll = (scrollRect) => {
+      const maxScrollLeft = scrollEl.scrollWidth - scrollEl.clientWidth;
+      if (maxScrollLeft <= 0) return;
+      if (pointerX < scrollRect.left + EDGE_ZONE && scrollEl.scrollLeft > 0) {
+        const depth = Math.min(1, (scrollRect.left + EDGE_ZONE - pointerX) / EDGE_ZONE);
+        scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - depth * MAX_SCROLL_SPEED);
+      } else if (pointerX > scrollRect.right - EDGE_ZONE && scrollEl.scrollLeft < maxScrollLeft) {
+        const depth = Math.min(1, (pointerX - (scrollRect.right - EDGE_ZONE)) / EDGE_ZONE);
+        scrollEl.scrollLeft = Math.min(maxScrollLeft, scrollEl.scrollLeft + depth * MAX_SCROLL_SPEED);
+      }
+    };
+
+    // If the button the lens was last over is partially clipped by the
+    // scroll window's edges when the drag ends, smooth-scroll just enough
+    // to bring it fully into view instead of leaving it half-cut-off.
+    const snapButtonIntoView = (index) => {
+      if (index === null) return;
+      const btn = bar.querySelectorAll('.lln-btn')[index];
+      if (!btn) return;
+      const scrollRect = scrollEl.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      let delta = 0;
+      if (btnRect.left < scrollRect.left + SNAP_PADDING) {
+        delta = btnRect.left - (scrollRect.left + SNAP_PADDING);
+      } else if (btnRect.right > scrollRect.right - SNAP_PADDING) {
+        delta = btnRect.right - (scrollRect.right - SNAP_PADDING);
+      }
+      if (delta !== 0) {
+        scrollEl.scrollTo({ left: scrollEl.scrollLeft + delta, behavior: 'smooth' });
+      }
+    };
+
+    // One rAF loop drives everything while dragging: auto-scroll, lens
+    // repositioning, and hover/tap-action detection. Running this every
+    // frame (not just on pointermove) is what makes the icons keep
+    // scrolling under a finger that's stopped moving but is still pinned
+    // at the edge - the bar's geometry shifts under a fixed clientX.
+    const frameTick = () => {
+      if (!dragging) return;
+      const scrollRect = scrollEl.getBoundingClientRect();
       const tooFarVertically =
-        clientY < rect.top - VERTICAL_TOLERANCE_TOP || clientY > rect.bottom + VERTICAL_TOLERANCE_BOTTOM;
+        pointerY < scrollRect.top - VERTICAL_TOLERANCE_TOP || pointerY > scrollRect.bottom + VERTICAL_TOLERANCE_BOTTOM;
 
       if (tooFarVertically) {
         lens.classList.remove('active');
         lastHoverIndex = null;
-        return;
+      } else {
+        applyAutoScroll(scrollRect);
+
+        const barRect = bar.getBoundingClientRect();
+        const lensSize = lens.offsetWidth;
+        const minX = Math.max(scrollRect.left, barRect.left) + lensSize / 2;
+        const maxX = Math.min(scrollRect.right, barRect.right) - lensSize / 2;
+        const clampedX = Math.min(Math.max(pointerX, minX), maxX);
+        const localX = clampedX - barRect.left - lensSize / 2;
+        lens.style.left = `${localX}px`;
+        lens.classList.add('active');
+
+        const btnRects = Array.from(bar.querySelectorAll('.lln-btn')).map((b) => b.getBoundingClientRect());
+        updateHoverIndex(clampedX, btnRects);
       }
 
-      const lensSize = lens.offsetWidth;
-      const minX = rect.left + lensSize / 2;
-      const maxX = rect.right - lensSize / 2;
-      const clampedX = Math.min(Math.max(clientX, minX), maxX);
-
-      const x = clampedX - rect.left - lensSize / 2;
-      lens.style.left = `${x}px`;
-      lens.classList.add('active');
-
-      updateHoverIndex(clampedX);
+      rafId = requestAnimationFrame(frameTick);
     };
 
-    const hideLens = () => {
+    const stopDrag = () => {
+      dragging = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      const releasedIndex = lastHoverIndex;
       lens.classList.remove('active');
       lastHoverIndex = null;
+      document.removeEventListener('pointermove', onDocPointerMove);
+      document.removeEventListener('pointerup', onDocPointerUp);
+      document.removeEventListener('pointercancel', onDocPointerCancel);
+      // Releasing always navigates right away - in dwell mode this
+      // finalizes early instead of waiting out the delay; in
+      // release_only mode this is the *only* place navigation ever fires.
+      if (pendingTimer) clearTimeout(pendingTimer);
+      pendingTimer = null;
+      if (pendingIndex !== null) {
+        this._handleAction(routes[pendingIndex]);
+        pendingIndex = null;
+      }
+      snapButtonIntoView(releasedIndex);
+      this._updateActiveRoute();
     };
 
     const onDocPointerMove = (e) => {
       if (!dragging) return;
-      moveLens(e.clientX, e.clientY);
+      pointerX = e.clientX;
+      pointerY = e.clientY;
     };
+    const onDocPointerUp = () => stopDrag();
+    const onDocPointerCancel = () => stopDrag();
 
-    // A real pointerup: whatever icon the lens is currently over wins
-    // (it was already "activated" live in updateHoverIndex as it passed
-    // over each icon, so this just ends the gesture).
-    const onDocPointerUp = () => {
-      dragging = false;
-      hideLens();
-      document.removeEventListener('pointermove', onDocPointerMove);
-      document.removeEventListener('pointerup', onDocPointerUp);
-      document.removeEventListener('pointercancel', onDocPointerCancel);
-    };
-
-    // A cancelled gesture (e.g. the OS interrupts the touch) intentionally
-    // does NOT trigger whatever icon was last under the lens.
-    const onDocPointerCancel = () => {
-      dragging = false;
-      hideLens();
-      document.removeEventListener('pointermove', onDocPointerMove);
-      document.removeEventListener('pointerup', onDocPointerUp);
-      document.removeEventListener('pointercancel', onDocPointerCancel);
-    };
-
-    bar.addEventListener('pointerdown', (e) => {
+    scrollEl.addEventListener('pointerdown', (e) => {
       dragging = true;
-      btnRects = Array.from(bar.querySelectorAll('.lln-btn')).map((b) => b.getBoundingClientRect());
-      moveLens(e.clientX, e.clientY);
-      // Listen on `document` rather than `bar` so the lens keeps tracking
-      // even if the pointer briefly leaves the bar's own bounding box.
+      pointerX = e.clientX;
+      pointerY = e.clientY;
       document.addEventListener('pointermove', onDocPointerMove);
       document.addEventListener('pointerup', onDocPointerUp);
       document.addEventListener('pointercancel', onDocPointerCancel);
+      rafId = requestAnimationFrame(frameTick);
     });
+
+    // Keeps the persistent "active route" highlight in sync with
+    // hash-based popup navigation, plain view navigation, and
+    // browser back/forward.
+    window.addEventListener('hashchange', () => this._updateActiveRoute());
+    window.addEventListener('location-changed', () => this._updateActiveRoute());
+    window.addEventListener('popstate', () => this._updateActiveRoute());
 
     this._updateIconColors();
     this._updateValues();
     this._updateEditMode();
+    this._updateActiveRoute();
+    // Editor dialogs sometimes finish mounting their own wrapper a beat
+    // after this card's connectedCallback has already fired, so the very
+    // first _updateEditMode() call can miss the ha-dialog ancestor. One
+    // cheap delayed re-check covers that race without needing a
+    // MutationObserver.
+    setTimeout(() => this._updateEditMode(), 50);
   }
 
   _handleAction(route) {
@@ -514,8 +754,6 @@ class LiquidLensNavbarCard extends HTMLElement {
     if (action.action === 'navigate') {
       const path = action.navigation_path;
       if (path.startsWith('#')) {
-        // Hash-based navigation (e.g. bubble-card pop-ups) — a plain
-        // hash change so any hashchange listeners elsewhere pick it up.
         window.location.hash = path;
       } else {
         window.history.pushState(null, '', path);
@@ -536,5 +774,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'liquid-lens-navbar-card',
   name: 'Liquid Lens Navbar Card',
-  description: 'A bottom navbar with an iOS-26-style liquid glass lens that follows your finger, plus per-route status dots, a live value readout, and JS-templated icon symbols/colors. Sizing options have a visual editor.',
+  description: 'A bottom navbar with an iOS-26-style liquid glass lens that follows your finger, plus per-route status dots, a live value readout, JS-templated icon symbols/colors/pulse, a persistent active-route highlight, a scrollable bar with snap-into-view, and hover-delayed (or release-only) popup navigation to stay smooth on fast swipes. Sizing options have a visual editor.',
 });
