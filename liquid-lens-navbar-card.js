@@ -49,11 +49,20 @@
  * instead of the raw English state string, with a safe fallback for
  * older cores that don't expose that helper.
  *
+ * v1.5.3: hash-based `navigate` actions (e.g. `#my-popup`) now use
+ * `history.pushState` plus a manually dispatched `hashchange` event
+ * instead of a native `location.hash` assignment. The native assignment
+ * was found to trigger a brief reload/flash of the whole dashboard on
+ * the iOS Companion App's WKWebView on every hash-based popup
+ * navigation - not reproducible on Android or desktop browsers. Bubble
+ * Card and this card's own active-route highlighting are unaffected,
+ * since both only listen for the `hashchange` event either way.
+ *
  * https://github.com/donsebby/liquid-lens-navbar-card
  * License: MIT
  */
 
-const CARD_VERSION = '1.5.2';
+const CARD_VERSION = '1.5.3';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -804,7 +813,17 @@ class LiquidLensNavbarCard extends HTMLElement {
     if (action.action === 'navigate') {
       const path = action.navigation_path;
       if (path.startsWith('#')) {
-        window.location.hash = path;
+        // Avoid a native `location.hash` assignment here - on the iOS
+        // Companion App's WKWebView this was observed to trigger a brief
+        // reload/flash of the whole dashboard on every hash-based popup
+        // navigation (not reproducible on Android or desktop browsers).
+        // pushState changes the URL without that native-navigation signal;
+        // hashchange is dispatched manually since pushState doesn't fire it
+        // on its own, so Bubble Card and this card's own active-route
+        // detection keep working unchanged. Fixed in v1.5.3.
+        const oldURL = window.location.href;
+        window.history.pushState(null, '', path);
+        window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL, newURL: window.location.href }));
       } else {
         window.history.pushState(null, '', path);
         window.dispatchEvent(new CustomEvent('location-changed', { detail: { replace: false } }));
