@@ -29,7 +29,8 @@ displays that can't fit every route at once.
 - Theme-aware: icons use `var(--primary-text-color)`, so they stay legible
   in both light and dark themes
 
-![demo](asset/demo.gif)
+![demo](asset/liquid_lens_navbar_demo.gif)
+![demo_images](asset/liquid_lens_navbar_collage.png)
 
 > Built for and tested against Home Assistant's `sections` dashboard type,
 > alongside [Bubble Card](https://github.com/Clooos/Bubble-Card) pop-ups
