@@ -62,7 +62,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = '1.5.3';
+const CARD_VERSION = '1.5.4';
 
 // eslint-disable-next-line no-console
 console.info(
@@ -113,6 +113,11 @@ class LiquidLensNavbarCard extends HTMLElement {
       schema: [
         { name: 'hide_labels', selector: { boolean: {} } },
         { name: 'release_only', selector: { boolean: {} } },
+        { name: 'haptic_enabled', selector: { boolean: {} } },
+        {
+          name: 'haptic_intensity',
+          selector: { number: { min: 0, max: 50, step: 1, mode: 'slider', unit_of_measurement: 'ms' } },
+        },
         {
           type: 'grid',
           name: '',
@@ -150,6 +155,10 @@ class LiquidLensNavbarCard extends HTMLElement {
             return 'Hide labels';
           case 'release_only':
             return 'Only navigate on release';
+          case 'haptic_enabled':
+            return 'Haptic feedback';
+          case 'haptic_intensity':
+            return 'Haptic intensity';
           case 'icon_size':
             return 'Icon size';
           case 'item_gap':
@@ -181,6 +190,10 @@ class LiquidLensNavbarCard extends HTMLElement {
             return 'How long the lens must sit on an icon before its popup loads (default: 130ms). Higher = smoother fast swipes, lower = snappier. Ignored if "Only navigate on release" is on.';
           case 'release_only':
             return 'Popups never open mid-drag, only when you lift your finger off an icon. Overrides the popup delay above.';
+          case 'haptic_enabled':
+            return 'Vibrate/tap-feedback while dragging over icons and on tap (default: on). Turning this off also stops the Companion App\'s native haptic on iOS, not just the web Vibration API.';
+          case 'haptic_intensity':
+            return 'Vibration strength in ms (default: 8ms). Only affects navigator.vibrate, which Android/Chrome supports - iOS has no web Vibration API at all, so this slider has no effect there. Use the toggle above to control iOS haptics.';
         }
         return undefined;
       },
@@ -641,9 +654,18 @@ class LiquidLensNavbarCard extends HTMLElement {
       pendingIndex = null;
     };
 
+    // haptic_enabled / haptic_intensity: plain card config, editable in the
+    // visual editor above. IMPORTANT: iOS Safari/WKWebView has no Vibration
+    // API at all - what you actually feel on an iPhone comes from the
+    // Companion App's native haptic bridge, which listens for the "haptic"
+    // CustomEvent below, not from navigator.vibrate(). So the enabled check
+    // has to gate that dispatchEvent call too, not just vibrate().
     const fireHaptic = () => {
+      const hapticsEnabled = this.config.haptic_enabled !== false;
+      if (!hapticsEnabled) return;
       this.dispatchEvent(new CustomEvent('haptic', { bubbles: true, composed: true, detail: 'selection' }));
-      if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(8);
+      const intensity = this.config.haptic_intensity ?? 8;
+      if (window.navigator && window.navigator.vibrate && intensity > 0) window.navigator.vibrate(intensity);
     };
 
     // Haptic feedback still fires immediately on every icon the lens
@@ -833,7 +855,9 @@ class LiquidLensNavbarCard extends HTMLElement {
       this._hass.callService(domain, service, action.service_data || action.data || {}, action.target || {});
     }
 
-    this.dispatchEvent(new CustomEvent('haptic', { bubbles: true, composed: true, detail: 'light' }));
+    if (this.config.haptic_enabled !== false) {
+      this.dispatchEvent(new CustomEvent('haptic', { bubbles: true, composed: true, detail: 'light' }));
+    }
   }
 }
 
