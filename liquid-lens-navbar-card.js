@@ -73,11 +73,25 @@
  * route (text plus up to four bars, all templatable). Releasing opens
  * the popup as before; routes with a peek don't open it mid-drag.
  *
+ * v1.7.0: optional `visibility` on routes and on modes, using the same
+ * condition list as a Lovelace card's `visibility` (user, state,
+ * numeric_state, and/or/not). One card can now serve family and admins:
+ * hidden routes are simply not rendered, hidden modes are skipped when
+ * switching, and a bar left with a single visible mode behaves exactly
+ * like a plain `routes` bar. Conditions are re-checked on hass updates,
+ * but the buttons are only rebuilt when the visible set really changes.
+ *
  * https://github.com/donsebby/liquid-lens-navbar-card
  * License: MIT
  */
 
-const CARD_VERSION = '1.6.0';
+const CARD_VERSION = '1.7.0';
+
+// Unknown `visibility` condition types are treated as "visible" (so a
+// typo or a newer Lovelace condition never hides a route for good), but
+// warned about once per type - not on every hass update.
+const LLN_WARNED_CONDITIONS = new Set();
+const LLN_ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 
 // eslint-disable-next-line no-console
 console.info(
@@ -101,29 +115,43 @@ class LiquidLensNavbarCard extends HTMLElement {
     } else {
       throw new Error('liquid-lens-navbar-card: "routes" (or "modes") must be a non-empty array');
     }
+    // A typo like `visibility: admin` would otherwise silently count as
+    // "no conditions" and show an admin route to everyone.
+    const checkVisibility = (vis, where) => {
+      if (vis != null && typeof vis !== 'object') {
+        throw new Error(`liquid-lens-navbar-card: ${where}.visibility must be a list of conditions`);
+      }
+    };
     modes.forEach((mode, mi) => {
       if (!mode || !Array.isArray(mode.routes) || mode.routes.length === 0) {
         throw new Error(`liquid-lens-navbar-card: modes[${mi}].routes must be a non-empty array`);
       }
+      checkVisibility(mode.visibility, `modes[${mi}]`);
       mode.routes.forEach((route, ri) => {
+        const where = config.modes ? `modes[${mi}].routes[${ri}]` : `routes[${ri}]`;
         if (!route.icon) {
-          const where = config.modes ? `modes[${mi}].routes[${ri}]` : `routes[${ri}]`;
           throw new Error(`liquid-lens-navbar-card: ${where} is missing "icon"`);
         }
+        checkVisibility(route.visibility, where);
       });
     });
     this.config = config;
     this._modes = modes;
-    if (this._modeIndex == null || this._modeIndex >= modes.length) {
+    this._initVisibility();
+    if (this._modeIndex == null || this._modeIndex >= this._view.length) {
       this._modeIndex = this._modeForLocation() ?? 0;
     }
     this._rendered = false;
     this._render();
   }
 
-  // Routes of the currently visible mode.
+  // Routes of the currently visible mode. `this._modes` is the full
+  // config; `this._view` is the part of it this user may see right now
+  // (see _computeView), and everything at runtime - indices, swipes, mode
+  // dots - works on the view, so hidden routes can't be reached at all.
   _routes() {
-    return this._modes[this._modeIndex].routes;
+    const mode = this._view && this._view[this._modeIndex];
+    return mode ? mode.routes : [];
   }
 
   // Populates a sensible default when the card is added via the
@@ -242,6 +270,7 @@ class LiquidLensNavbarCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    this._refreshVisibility();
     if (this._peekVisible) this._fillPeek();
     this._updateIconColors();
     this._updateValues();
@@ -353,10 +382,11 @@ class LiquidLensNavbarCard extends HTMLElement {
   // Mode dots: the active mode's dot is a wider pill; a *hidden* mode's
   // dot takes the first truthy `dots[].color` of that mode's routes, so
   // e.g. a red "server down" dot in the Tech mode stays visible while
-  // the Home mode is showing.
+  // the Home mode is showing. Only routes visible to this user count, so
+  // a hidden admin route can't light up a dot for someone else.
   _updateModeDots() {
-    if (!this._hass || !this._modes || this._modes.length < 2) return;
-    this._modes.forEach((mode, mi) => {
+    if (!this._hass || !this._view || this._view.length < 2) return;
+    this._view.forEach((mode, mi) => {
       const el = this.querySelector(`.lln-mdot[data-mode="${mi}"]`);
       if (!el) return;
       let alert = null;
@@ -527,6 +557,205 @@ class LiquidLensNavbarCard extends HTMLElement {
     }
   }
 
+  // ---- visibility -----------------------------------------------------
+
+  // Called from setConfig: works out which entities the conditions read
+  // (so hass updates can be skipped cheaply), and builds the first view.
+  _initVisibility() {
+    const deps = new Set();
+    let any = false;
+    const collect = (vis) => {
+      if (vis == null) return;
+      any = true;
+      this._collectConditionDeps(vis, deps);
+    };
+    this._modes.forEach((mode) => {
+      collect(mode.visibility);
+      mode.routes.forEach((route) => collect(route.visibility));
+    });
+    this._hasVisibility = any;
+    this._visDeps = Array.from(deps);
+    this._visSnap = null;
+    this._visDirty = false;
+    this._view = this._computeView();
+    this._viewKey = this._keyOfView(this._view);
+  }
+
+  // Every entity id a condition list may read: `entity`/`entity_id`,
+  // plus state/state_not/above/below values that name an entity (Lovelace
+  // allows comparing against another entity's state there).
+  _collectConditionDeps(conds, deps) {
+    const list = Array.isArray(conds) ? conds : [conds];
+    const addIfEntity = (v) => {
+      (Array.isArray(v) ? v : [v]).forEach((x) => {
+        if (typeof x === 'string' && LLN_ENTITY_ID.test(x)) deps.add(x);
+      });
+    };
+    list.forEach((c) => {
+      if (!c || typeof c !== 'object') return;
+      if (c.conditions) this._collectConditionDeps(c.conditions, deps);
+      addIfEntity(c.entity_id);
+      addIfEntity(c.entity);
+      addIfEntity(c.state);
+      addIfEntity(c.state_not);
+      addIfEntity(c.above);
+      addIfEntity(c.below);
+    });
+  }
+
+  // `set hass` fires on every state change anywhere in Home Assistant.
+  // The conditions only depend on the user and a handful of entities, and
+  // HA replaces a state object whenever that entity changes - so a cheap
+  // identity check against the last seen objects tells us whether
+  // re-evaluating could change anything at all.
+  _visDepsChanged() {
+    const hass = this._hass;
+    const user = hass && hass.user ? hass.user.id : null;
+    const states = this._visDeps.map((e) => (hass && hass.states ? hass.states[e] : undefined));
+    const snap = this._visSnap;
+    const changed =
+      !snap || snap.user !== user || snap.states.length !== states.length || states.some((s, i) => s !== snap.states[i]);
+    if (changed) this._visSnap = { user, states };
+    return changed;
+  }
+
+  // Re-checks the conditions after a hass update and rebuilds the bar only
+  // if the set of visible routes/modes actually differs. Mid-drag the
+  // rebuild is postponed to the release: button indices must not shift
+  // under the finger (the pending hover navigation refers to them).
+  _refreshVisibility() {
+    if (!this._hasVisibility || !this._modes) return;
+    const changed = this._visDepsChanged();
+    if (!changed && !this._visDirty) return;
+    if (this._dragging) {
+      this._visDirty = true;
+      return;
+    }
+    this._visDirty = false;
+    const view = this._computeView();
+    const key = this._keyOfView(view);
+    if (key === this._viewKey) return;
+    this._applyView(view, key);
+  }
+
+  // The visible part of the config: modes whose own conditions pass and
+  // that still have at least one visible route (an empty mode would be a
+  // blank bar to swipe through). `src`/`ids` remember the config indices,
+  // only used to tell whether two views are the same.
+  _computeView() {
+    const view = [];
+    this._modes.forEach((mode, src) => {
+      if (!this._isVisible(mode.visibility)) return;
+      const routes = [];
+      const ids = [];
+      mode.routes.forEach((route, ri) => {
+        if (!this._isVisible(route.visibility)) return;
+        routes.push(route);
+        ids.push(ri);
+      });
+      if (routes.length) view.push({ name: mode.name, path: mode.path, routes, src, ids });
+    });
+    return view;
+  }
+
+  _keyOfView(view) {
+    return view.map((m) => `${m.src}:${m.ids.join(',')}`).join('|');
+  }
+
+  // Swaps in a new view and rebuilds only the buttons and mode dots - the
+  // bar itself, its listeners and the lens stay. The mode the user is
+  // looking at is kept if it is still visible: a state change must not
+  // yank them back to the mode the URL belongs to after they swiped away.
+  // The URL only decides when its mode has just become visible (typically
+  // the first hass update revealing an admin mode the page was opened in)
+  // or when the current mode disappeared.
+  _applyView(view, key) {
+    const oldView = this._view || [];
+    const current = oldView[this._modeIndex];
+    this._view = view;
+    this._viewKey = key;
+    const kept = current ? view.findIndex((m) => m.src === current.src) : -1;
+    const loc = this._modeForLocation();
+    const locIsNew = loc != null && !oldView.some((m) => m.src === view[loc].src);
+    if (locIsNew || kept < 0) this._modeIndex = loc ?? 0;
+    else this._modeIndex = kept;
+    if (!this._rendered) return;
+    this._hidePeek();
+    this._renderModeDots();
+    this._renderButtons(null);
+    this._updateIconColors();
+    this._updateValues();
+    this._updateActiveRoute();
+  }
+
+  // Lovelace semantics: a list means "all must pass". Without hass the
+  // user and states are unknown, so anything with conditions stays hidden
+  // until the first update - better than flashing admin routes to everyone.
+  _isVisible(conds) {
+    if (conds == null) return true;
+    if (!this._hass) return false;
+    const list = Array.isArray(conds) ? conds : [conds];
+    return list.every((c) => this._checkCondition(c));
+  }
+
+  // Mirrors Home Assistant's frontend (validate-condition.ts) for the
+  // condition types that make sense on a navbar, including its quirks:
+  // `not` is "not all of", a missing entity reads as "unknown", and a
+  // state/above/below value may name another entity.
+  _checkCondition(c) {
+    if (!c || typeof c !== 'object') return true;
+    const hass = this._hass;
+    const type = c.condition ?? 'state';
+    const entityState = (id) => (typeof id === 'string' && hass.states[id] ? hass.states[id].state : undefined);
+    switch (type) {
+      case 'user':
+        return Array.isArray(c.users) && !!(hass.user && hass.user.id) && c.users.includes(hass.user.id);
+      case 'and':
+        return !c.conditions || this._isVisible(c.conditions);
+      case 'or':
+        return !c.conditions || (Array.isArray(c.conditions) ? c.conditions : [c.conditions]).some((x) => this._isVisible([x]));
+      case 'not':
+        return !c.conditions || !this._isVisible(c.conditions);
+      case 'state': {
+        const id = c.entity_id || c.entity;
+        const st = id ? hass.states[id] : undefined;
+        let state;
+        if (!st) state = 'unknown';
+        else if (c.attribute) state = st.attributes[c.attribute] == null ? 'unknown' : String(st.attributes[c.attribute]);
+        else state = st.state;
+        const wanted = c.state ?? c.state_not;
+        if (wanted === undefined) return false;
+        const values = [];
+        (Array.isArray(wanted) ? wanted : [wanted]).forEach((v) => {
+          values.push(String(v));
+          const other = LLN_ENTITY_ID.test(String(v)) ? entityState(v) : undefined;
+          if (other !== undefined) values.push(other);
+        });
+        return c.state != null ? values.includes(state) : !values.includes(state);
+      }
+      case 'numeric_state': {
+        const id = c.entity_id || c.entity;
+        const st = id ? hass.states[id] : undefined;
+        const value = Number(c.attribute ? st && st.attributes[c.attribute] : st && st.state);
+        if (!st || Number.isNaN(value)) return false;
+        const limit = (v) => Number(entityState(v) ?? v);
+        const above = limit(c.above);
+        const below = limit(c.below);
+        return (
+          (c.above == null || Number.isNaN(above) || value > above) &&
+          (c.below == null || Number.isNaN(below) || value < below)
+        );
+      }
+      default:
+        if (!LLN_WARNED_CONDITIONS.has(type)) {
+          LLN_WARNED_CONDITIONS.add(type);
+          // eslint-disable-next-line no-console
+          console.warn(`liquid-lens-navbar-card: visibility condition "${type}" is not supported, treating it as visible`);
+        }
+        return true;
+    }
+  }
+
   // ---- modes ----------------------------------------------------------
 
   _reducedMotion() {
@@ -535,20 +764,22 @@ class LiquidLensNavbarCard extends HTMLElement {
 
   // Which mode the current URL belongs to: a mode's own `path` (view)
   // wins, otherwise the first mode containing a route that is active.
-  // null = the URL doesn't say, keep whatever mode is showing.
+  // null = the URL doesn't say, keep whatever mode is showing. Only
+  // visible modes/routes are considered: a URL that belongs to a hidden
+  // route leaves the mode alone and simply highlights nothing.
   _modeForLocation() {
-    if (!this._modes || this._modes.length < 2) return null;
+    if (!this._view || this._view.length < 2) return null;
     const pathname = window.location.pathname;
-    const byPath = this._modes.findIndex(
+    const byPath = this._view.findIndex(
       (m) => m.path && (pathname === m.path || pathname.startsWith(`${m.path}/`))
     );
     if (byPath >= 0) return byPath;
-    const byRoute = this._modes.findIndex((m) => m.routes.some((r) => this._isRouteActive(r)));
+    const byRoute = this._view.findIndex((m) => m.routes.some((r) => this._isRouteActive(r)));
     return byRoute >= 0 ? byRoute : null;
   }
 
   _syncModeToLocation() {
-    if (!this._modes || !this._rendered) return;
+    if (!this._view || !this._rendered) return;
     const idx = this._modeForLocation();
     if (idx != null && idx !== this._modeIndex) {
       this._switchMode(idx, idx > this._modeIndex ? 'up' : 'down', false);
@@ -560,7 +791,7 @@ class LiquidLensNavbarCard extends HTMLElement {
   // opposite side, and the glass bar morphs its width between the two
   // route counts instead of jumping.
   _switchMode(idx, dir, navigate) {
-    const count = this._modes.length;
+    const count = this._view.length;
     if (count < 2) return;
     idx = ((idx % count) + count) % count;
     if (idx === this._modeIndex) return;
@@ -594,7 +825,7 @@ class LiquidLensNavbarCard extends HTMLElement {
     this._updateIconColors();
     this._updateValues();
     this._updateActiveRoute();
-    this._flashModeLabel(this._modes[idx].name);
+    this._flashModeLabel(this._view[idx].name);
 
     // FLIP the bar width: pin the old width, then let it spring to the
     // new one. The icon row is offset by half the difference and eased
@@ -624,7 +855,7 @@ class LiquidLensNavbarCard extends HTMLElement {
       if (window.navigator && window.navigator.vibrate && intensity > 0) window.navigator.vibrate(intensity * 2);
     }
 
-    const mode = this._modes[idx];
+    const mode = this._view[idx];
     if (navigate && mode.path && window.location.pathname !== mode.path) {
       this._navigate(mode.path);
     }
@@ -723,6 +954,20 @@ class LiquidLensNavbarCard extends HTMLElement {
     barsEl.style.display = bars.length ? '' : 'none';
   }
 
+  // One dot per *visible* mode. The container exists whenever the config
+  // has several modes, because visibility can change at runtime; with
+  // fewer than two visible modes it is hidden, so the bar looks exactly
+  // like a plain `routes` bar (no dots, and swiping is off as well).
+  _renderModeDots() {
+    const dots = this.querySelector('.lln-modes');
+    if (!dots) return;
+    const count = this._view.length;
+    dots.style.display = count > 1 ? '' : 'none';
+    if (dots.childElementCount !== count) {
+      dots.innerHTML = this._view.map((_, mi) => `<span class="lln-mdot" data-mode="${mi}"></span>`).join('');
+    }
+  }
+
   _markActiveModeDot() {
     this.querySelectorAll('.lln-mdot').forEach((dot) => {
       dot.classList.toggle('lln-mdot-on', Number(dot.dataset.mode) === this._modeIndex);
@@ -761,6 +1006,10 @@ class LiquidLensNavbarCard extends HTMLElement {
       )
       .join('');
     bar.querySelector('#lln-lens').insertAdjacentHTML('beforebegin', html);
+    // Nothing visible for this user (or no hass yet and every route has
+    // conditions): hide the whole bar instead of an empty glass pill.
+    const wrap = this.querySelector('.lln-wrap');
+    if (wrap) wrap.classList.toggle('lln-empty', this._routes().length === 0);
     if (dir) {
       bar.querySelectorAll(':scope > .lln-btn').forEach((btn) => {
         btn.addEventListener(
@@ -783,6 +1032,9 @@ class LiquidLensNavbarCard extends HTMLElement {
   _render() {
     if (this._rendered) return;
     this._rendered = true;
+    // A config change mid-drag replaces the bar and its listeners; the
+    // old drag can never report its release, so don't wait for it.
+    this._dragging = false;
 
     // Sizing knobs - all optional, all in px, and all default to the
     // card's original fixed values so existing configs render exactly
@@ -805,6 +1057,9 @@ class LiquidLensNavbarCard extends HTMLElement {
     const buttonSize = this.config.button_size ?? 54;
     const lensWidth = this.config.lens_width ?? buttonSize + itemGap * 2;
     const maxWidthCss = this.config.max_width ? `${this.config.max_width}px` : 'calc(100vw - 32px)';
+    // Deliberately the *config's* mode count, not the visible one: the
+    // dot row and label must already exist if visibility later reveals a
+    // second mode. _renderModeDots() hides them while only one is visible.
     const multiMode = this._modes.length > 1;
     const hasPeek = this._modes.some((m) => m.routes.some((r) => r.peek));
     const spring = 'cubic-bezier(0.3, 1.3, 0.5, 1)';
@@ -824,6 +1079,9 @@ class LiquidLensNavbarCard extends HTMLElement {
           display: flex;
           flex-direction: column;
           align-items: center;
+        }
+        .lln-wrap.lln-empty {
+          display: none;
         }
         .lln-wrap.lln-editmode {
           position: relative;
@@ -1226,9 +1484,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         ${
           multiMode
             ? `<div class="lln-modelabel"></div>
-               <div class="lln-modes" aria-hidden="true">${this._modes
-                 .map((_, mi) => `<span class="lln-mdot" data-mode="${mi}"></span>`)
-                 .join('')}</div>`
+               <div class="lln-modes" aria-hidden="true"></div>`
             : ''
         }
         <div class="lln-scroll" id="lln-scroll">
@@ -1239,6 +1495,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         </div>
       </div>
     `;
+    this._renderModeDots();
     this._renderButtons(null);
 
     const scrollEl = this.querySelector('#lln-scroll');
@@ -1345,7 +1602,7 @@ class LiquidLensNavbarCard extends HTMLElement {
             // the popup (pendingIndex stays set for stopDrag()).
             const showPeek = () => {
               const dy = Math.abs(pointerY - startY);
-              if (this._modes.length > 1 && dy > 4 && dy > Math.abs(pointerX - startX)) {
+              if (this._view.length > 1 && dy > 4 && dy > Math.abs(pointerX - startX)) {
                 pendingTimer = setTimeout(showPeek, 60);
                 return;
               }
@@ -1360,7 +1617,7 @@ class LiquidLensNavbarCard extends HTMLElement {
               // past SWIPE_DETECT) must not open the popup under the
               // finger - wait until the gesture has made up its mind.
               const dy = Math.abs(pointerY - startY);
-              if (this._modes.length > 1 && dy > 4 && dy > Math.abs(pointerX - startX)) {
+              if (this._view.length > 1 && dy > 4 && dy > Math.abs(pointerX - startX)) {
                 pendingTimer = setTimeout(fire, 60);
                 return;
               }
@@ -1474,7 +1731,15 @@ class LiquidLensNavbarCard extends HTMLElement {
       lensX = null;
     };
 
+    // A visibility change that arrived mid-drag was postponed (see
+    // _refreshVisibility); apply it now that indices may shift again.
     const stopDrag = (cancelled) => {
+      finishDrag(cancelled);
+      this._dragging = false;
+      if (this._visDirty) this._refreshVisibility();
+    };
+
+    const finishDrag = (cancelled) => {
       dragging = false;
       this._hidePeek();
       if (rafId) cancelAnimationFrame(rafId);
@@ -1526,7 +1791,7 @@ class LiquidLensNavbarCard extends HTMLElement {
       if (!dragging) return;
       pointerX = e.clientX;
       pointerY = e.clientY;
-      if (this._modes.length < 2) return;
+      if (this._view.length < 2) return;
       const dx = pointerX - startX;
       const dy = pointerY - startY;
       // Mostly-vertical movement past the threshold turns the drag into
@@ -1546,9 +1811,9 @@ class LiquidLensNavbarCard extends HTMLElement {
         swipeArmed = armed;
         if (armed) {
           fireHaptic();
-          const count = this._modes.length;
+          const count = this._view.length;
           const target = (((this._modeIndex + (dy < 0 ? 1 : -1)) % count) + count) % count;
-          this._flashModeLabel(this._modes[target].name, true);
+          this._flashModeLabel(this._view[target].name, true);
         } else {
           this._flashModeLabel(null);
         }
@@ -1559,6 +1824,7 @@ class LiquidLensNavbarCard extends HTMLElement {
 
     scrollEl.addEventListener('pointerdown', (e) => {
       dragging = true;
+      this._dragging = true;
       swiping = false;
       swipeArmed = false;
       pointerX = startX = e.clientX;
@@ -1661,5 +1927,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'liquid-lens-navbar-card',
   name: 'Liquid Lens Navbar Card',
-  description: 'A bottom navbar with an iOS-26-style liquid glass lens that follows your finger, plus per-route status dots, a live value readout, JS-templated icon symbols/colors/pulse, a persistent active-route highlight, a scrollable bar with snap-into-view, hover-delayed (or release-only) popup navigation to stay smooth on fast swipes, and multiple route sets (modes) you switch by swiping the bar up or down. Sizing options have a visual editor.',
+  description: 'A bottom navbar with an iOS-26-style liquid glass lens that follows your finger, plus per-route status dots, a live value readout, JS-templated icon symbols/colors/pulse, a persistent active-route highlight, a scrollable bar with snap-into-view, hover-delayed (or release-only) popup navigation to stay smooth on fast swipes, multiple route sets (modes) you switch by swiping the bar up or down, and per-user or per-state visibility for routes and modes. Sizing options have a visual editor.',
 });

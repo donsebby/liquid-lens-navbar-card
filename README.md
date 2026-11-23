@@ -31,6 +31,10 @@ displays that can't fit every route at once.
 - **Peek** (new in 1.6.0): while the lens rests on an icon, a small glass
   card above the bar shows that route's live summary (text and up to four
   bars); letting go opens the full popup as usual. See [Peek](#peek)
+- **Visibility** (new in 1.7.0): show routes or whole modes only to certain
+  users or while an entity is in a certain state, using the same
+  conditions as Lovelace card visibility. One card can serve the whole
+  family and the admin. See [Visibility](#visibility)
 - If routes don't fit in the available width, the bar scrolls
   horizontally — drag the lens to the edge and it keeps auto-scrolling
 - Light haptic pulse (native on the Companion App, `navigator.vibrate`
@@ -135,6 +139,7 @@ editor and click "Edit" instead of "Show code editor"). `hover_delay` and
 | `value_color`  | string | no       | A CSS color, or a `[[[ ... ]]]` template, coloring the `value_entity` readout. Ignored without `value_entity`. |
 | `pulse`        | string | no       | A `[[[ ... ]]]` template returning a boolean. When true, the icon pulses (scale + fade) — e.g. for a triggered alarm. |
 | `peek`         | object | no       | Mini overview shown above the bar while the lens rests on this route. See [Peek](#peek).                 |
+| `visibility`   | array  | no       | Conditions; the route is only shown while all of them pass. See [Visibility](#visibility).               |
 
 ### `tap_action`
 
@@ -292,6 +297,7 @@ modes:
 | `routes`    | array  | yes      | The routes of this mode — same route objects as above.                                             |
 | `name`      | string | no       | Shown briefly above the bar when switching to this mode.                                           |
 | `path`      | string | no       | A view path (e.g. `/my-dashboard/tech`). Switching to the mode navigates there, and opening that view switches to the mode. |
+| `visibility` | array | no       | Conditions; the whole mode is skipped while they don't pass. See [Visibility](#visibility).        |
 
 - **The mode follows the URL.** If a popup or view that belongs to another
   mode gets opened (by a link, a button elsewhere, browser back), the bar
@@ -301,12 +307,92 @@ modes:
   routes. Templates should therefore return `null` for "all fine" (as in
   the example) and a color only when something needs attention —
   otherwise the dot would glow all the time.
-- **Different modes for different people.** Two cards with
-  [visibility conditions](https://www.home-assistant.io/dashboards/cards/#showing-or-hiding-a-card-conditionally)
-  work well: a single-mode bar for the family and a two-mode bar (same
-  "Home" routes plus a "Tech" mode) for admins.
+- **Different modes for different people.** Give a mode (or a route) a
+  `visibility` list — see [Visibility](#visibility). Before 1.7.0 this
+  needed two cards with card-level visibility conditions.
 - A plain `routes` config is simply one mode: no dots, no swipe, exactly
   the behavior of earlier versions.
+
+### Visibility
+
+Routes and modes accept a `visibility` list with the same conditions as
+[Lovelace card visibility](https://www.home-assistant.io/dashboards/cards/#showing-or-hiding-a-card-conditionally).
+All conditions in the list must pass. That way one card can serve
+everyone: the family gets a plain bar, and the admin gets the same routes
+plus a second mode.
+
+```yaml
+type: custom:liquid-lens-navbar-card
+modes:
+  - name: Home
+    routes:
+      - icon: mdi:lightbulb-group
+        label: Lights
+        tap_action: { action: navigate, navigation_path: "#lights-popup" }
+      - icon: mdi:power-socket-eu
+        label: Plugs
+        tap_action: { action: navigate, navigation_path: "#plugs-popup" }
+      - icon: mdi:robot-vacuum
+        label: Vacuum
+        tap_action: { action: navigate, navigation_path: "#vacuum-popup" }
+        # only while the vacuum isn't docked
+        visibility:
+          - condition: state
+            entity: vacuum.robot
+            state_not: docked
+      - icon: mdi:shield-home
+        label: Security
+        tap_action: { action: navigate, navigation_path: "#security-popup" }
+      - icon: mdi:thermostat
+        label: Climate
+        tap_action: { action: navigate, navigation_path: "#climate-popup" }
+  - name: Tech
+    visibility:
+      - condition: user
+        users:
+          - 0123456789abcdef0123456789abcdef   # the admin's user ID
+    routes:
+      - icon: mdi:server
+        label: Server
+        tap_action: { action: navigate, navigation_path: "#server-popup" }
+      - icon: mdi:solar-power-variant
+        label: Energy
+        tap_action: { action: navigate, navigation_path: "#energy-popup" }
+      - icon: mdi:docker
+        label: Services
+        tap_action: { action: navigate, navigation_path: "#services-popup" }
+```
+
+Everyone else only sees the "Home" routes, as a plain bar with no mode
+dots and no swiping. The admin sees the same bar plus the dots and can
+swipe to "Tech". User IDs are listed under *Settings → People → Users*
+(with advanced mode turned on in your user profile).
+
+Supported conditions:
+
+| Condition       | Example                                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------- |
+| `user`          | `{ condition: user, users: [<user id>, ...] }`                                                        |
+| `state`         | `{ condition: state, entity: input_boolean.guests, state: "on" }` — or `state_not`; either may be a list |
+| `numeric_state` | `{ condition: numeric_state, entity: sensor.power, above: 100, below: 3000 }`                         |
+| `and` / `or`    | `{ condition: or, conditions: [ ... ] }`                                                              |
+| `not`           | `{ condition: not, conditions: [ ... ] }` — passes unless all inner conditions pass, like Lovelace   |
+
+- A hidden route isn't rendered at all, so the lens, a swipe or a peek
+  can't reach it. A mode is hidden when its own conditions fail or when
+  none of its routes are visible.
+- If only one mode is left, the bar behaves like a plain `routes` bar: no
+  mode dots, no swiping.
+- If the current URL belongs to a hidden route, nothing is highlighted.
+- Conditions are re-checked when the user or one of the entities they
+  read changes. The buttons are rebuilt only when the set of visible
+  routes actually changes, and never in the middle of a drag (the change
+  is applied on release).
+- Until Home Assistant has passed its state to the card, routes and modes
+  with conditions stay hidden. That way family members never see admin
+  routes flash up while the page loads.
+- Other Lovelace condition types (`screen`, `time`, `location`, …) aren't
+  supported yet. They count as passing and log a console warning once.
 
 ### Peek
 
@@ -366,8 +452,9 @@ mid-drag (the peek takes that place); routes without one keep the normal
   above) or group related items into a single popup with sub-sections.
 - The card's styles are not scoped per instance, so two navbar cards with
   *different* sizing options visible on the same page at the same time
-  share one set of sizes. Use one card with `modes`, or cards whose
-  visibility conditions never overlap.
+  share one set of sizes. Use one card with `modes` and
+  [`visibility`](#visibility), or cards whose visibility conditions never
+  overlap.
 - Not tested with a fixed `header` bar or a dashboard using `type: masonry`
   (only `type: sections`).
 
@@ -401,6 +488,22 @@ only ever navigate on release. See
 [Navigation timing](#navigation-timing-hover_delay--release_only).
 
 ## Changelog
+
+### v1.7.0
+
+- **Visibility**: new `visibility` option on routes and modes, using the
+  same conditions as Lovelace card visibility (`user`, `state`,
+  `numeric_state`, `and`, `or`, `not`). One card can now serve family and
+  admins instead of two cards with card-level conditions. Hidden routes
+  are not rendered, hidden modes are skipped when swiping, and a bar with
+  a single visible mode looks and behaves like a plain `routes` bar. See
+  [Visibility](#visibility).
+- Conditions are only re-evaluated when the user or an entity they read
+  changes, and the buttons are only rebuilt when the visible set really
+  changes — never mid-drag.
+- Mode dots only count alerts from routes this user can see.
+- Fully backwards compatible: configs without `visibility` render exactly
+  as before.
 
 ### v1.6.0
 
