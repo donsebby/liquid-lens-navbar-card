@@ -1,0 +1,62 @@
+name: Release
+
+# Publishes a GitHub release (which HACS offers as an update) only when a
+# version has been approved: `.release-approved` must contain the same
+# version as CARD_VERSION in the card file, and no tag for it may exist yet.
+# Pushing a new CARD_VERSION alone never releases anything.
+
+on:
+  push:
+    branches: [main]
+    paths: ['.release-approved']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version and approval
+        id: v
+        run: |
+          FILE=$(jq -r .filename hacs.json)
+          VER=$(grep -oE "CARD_VERSION *= *['\"][^'\"]+" "$FILE" | head -1 | sed -E "s/.*['\"]//")
+          APPROVED=$(tr -d ' \r\n' < .release-approved)
+          echo "Card file: $FILE, CARD_VERSION: $VER, approved: $APPROVED"
+          if [ -z "$VER" ] || [ "$VER" != "$APPROVED" ]; then
+            echo "Version not approved - nothing to release."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VER" >/dev/null; then
+            echo "Tag v$VER already exists - nothing to release."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes from the README changelog
+        if: steps.v.outputs.skip != '1'
+        run: |
+          VER='${{ steps.v.outputs.ver }}'
+          awk -v a="### $VER" -v b="### v$VER" '
+            $0 == a || $0 == b { found = 1; next }
+            found && /^##/ { exit }
+            found { print }
+          ' README.md > notes.md
+          [ -s notes.md ] || echo "See the README for details." > notes.md
+          cat notes.md
+
+      - name: Create release
+        if: steps.v.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER='${{ steps.v.outputs.ver }}'
+          gh release create "v$VER" --target "$GITHUB_SHA" --title "v$VER" --notes-file notes.md
