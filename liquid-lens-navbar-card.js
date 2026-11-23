@@ -85,7 +85,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = '1.7.0';
+const CARD_VERSION = '1.8.0';
 
 // Unknown `visibility` condition types are treated as "visible" (so a
 // typo or a newer Lovelace condition never hides a route for good), but
@@ -1101,10 +1101,10 @@ class LiquidLensNavbarCard extends HTMLElement {
           overscroll-behavior-x: contain;
           scroll-behavior: auto;
           border-radius: 999px;
-          background: rgba(255, 255, 255, 0.02);
-          backdrop-filter: blur(12px) saturate(180%);
-          -webkit-backdrop-filter: blur(12px) saturate(180%);
-          border: 1px solid rgba(255, 255, 255, 0.07);
+          background: var(--lln-bar-bg, rgba(255, 255, 255, 0.02));
+          backdrop-filter: var(--lln-bar-backdrop, blur(12px) saturate(180%));
+          -webkit-backdrop-filter: var(--lln-bar-backdrop, blur(12px) saturate(180%));
+          border: 1px solid var(--lln-bar-border, rgba(255, 255, 255, 0.07));
           box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
           touch-action: none;
           -webkit-user-select: none;

@@ -489,6 +489,9 @@ only ever navigate on release. See
 
 ## Changelog
 
+### v1.8.0
+- The bar reads three optional CSS variables, so a theme or an ambience card can give it a solid look: `--lln-bar-bg` (background), `--lln-bar-backdrop` (e.g. `none` to switch off the blur) and `--lln-bar-border`. Without them nothing changes.
+
 ### v1.7.0
 
 - **Visibility**: new `visibility` option on routes and modes, using the
