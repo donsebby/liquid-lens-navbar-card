@@ -1154,7 +1154,7 @@ class LiquidLensNavbarCard extends HTMLElement {
           background: rgba(255, 255, 255, 0.08);
         }
         .lln-btn.lln-btn-active {
-          color: var(--primary-color, #7c3aed);
+          color: var(--lln-accent, var(--primary-color, #7c3aed));
         }
         .lln-btn ha-icon {
           --mdc-icon-size: ${iconSize}px;
@@ -1174,8 +1174,8 @@ class LiquidLensNavbarCard extends HTMLElement {
           width: ${buttonSize}px;
           height: ${buttonSize}px;
           border-radius: 999px;
-          background: color-mix(in srgb, var(--primary-color, #7c3aed) 16%, transparent);
-          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color, #7c3aed) 22%, transparent);
+          background: color-mix(in srgb, var(--lln-accent, var(--primary-color, #7c3aed)) 16%, transparent);
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lln-accent, var(--primary-color, #7c3aed)) 22%, transparent);
           opacity: 0;
           scale: 0.6;
           pointer-events: none;
