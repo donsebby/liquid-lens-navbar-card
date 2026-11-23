@@ -437,6 +437,29 @@ updates live while it is open. Routes with a `peek` never open their popup
 mid-drag (the peek takes that place); routes without one keep the normal
 `hover_delay` behavior. Peek pairs well with `release_only: true`.
 
+### Solid look
+
+The bar's surface comes from the theme, there is no card option for it.
+These optional CSS variables override the glass defaults: `--lln-bar-bg`
+(background), `--lln-bar-backdrop` (blur; falls back to `--lg-backdrop`,
+then `blur(12px) saturate(180%)`), `--lln-bar-border`, and `--lln-accent`
+for the active icon and its highlight pill (default: `--primary-color`).
+
+The look can also come from the theme for all Liquid Glass cards at once:
+set `lg-look: solid` in your Home Assistant theme (CSS variable `--lg-look`).
+As long as `--lln-bar-bg` is not set, the bar then becomes a calm solid
+surface (`--surface`, default the theme's card colour at 88 %), without
+blur, with a thin edge, and the active route takes the text colour
+(`--lln-accent` still wins). The lens keeps its glass while dragging. The
+navbar has no `look:` of its own; on the other Liquid Glass cards `look:`
+overrides the theme per card. The variable is re-read when the theme or dark
+mode changes, or when the window event `lg-theme-changed` fires.
+
+```yaml
+# in your Home Assistant theme
+lg-look: solid
+```
+
 ## Known limitations
 
 - **No real optical distortion.** The lens uses blur/saturation/brightness
@@ -490,6 +513,7 @@ only ever navigate on release. See
 ## Changelog
 
 ### v1.8.0
+- The bar follows the theme-wide look: with `lg-look: solid` in the theme (and no `--lln-bar-bg`) it becomes a solid surface without blur, with a thin edge and the active route in the text colour. The blur also falls back to `--lg-backdrop`. Without the variables nothing changes.
 - The bar reads optional CSS variables, so a theme or an ambience card can give it a solid look: `--lln-bar-bg` (background), `--lln-bar-backdrop` (e.g. `none` to switch off the blur), `--lln-bar-border`, and `--lln-accent` for the active icon and its highlight pill (default: `--primary-color`). Without them nothing changes.
 
 ### v1.7.0
