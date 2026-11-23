@@ -7,7 +7,9 @@ colors/pulse, a persistent active-route highlight, and a scrollable bar for
 displays that can't fit every route at once.
 
 - Drag across the bar and a frosted glass lens tracks your finger, with a
-  soft light-refraction fringe at the edges
+  soft light-refraction fringe at the edges — it trails the finger
+  slightly, squashes with speed like a drop of liquid, and glides onto the
+  icon you release on
 - Icons switch popups as the lens settles on them — no need to lift your
   finger, just drag and let go on whatever you want (see
   [Navigation timing](#navigation-timing-hover_delay--release_only) for how
@@ -20,16 +22,24 @@ displays that can't fit every route at once.
   e.g. current solar production wattage under a Solar icon
 - Optional pulsing icon (`pulse`) for anything that needs attention, e.g. a
   triggered alarm
-- The currently open route is highlighted persistently, independent of the
-  drag-hover highlight
+- The currently open route is highlighted persistently by a pill that
+  slides to whichever route is active, independent of the drag-hover lens
+- **Modes** (new in 1.6.0): several route sets in one bar — swipe the bar
+  up or down to switch, e.g. an everyday "Home" set and a "Tech" set. The
+  glass morphs its width between them, and a dot above the bar lights up
+  if something in a hidden mode needs attention. See [Modes](#modes)
 - If routes don't fit in the available width, the bar scrolls
   horizontally — drag the lens to the edge and it keeps auto-scrolling
 - Light haptic pulse (native on the Companion App, `navigator.vibrate`
   fallback in-browser) as the lens crosses into a new icon
 - Theme-aware: icons use `var(--primary-text-color)`, so they stay legible
   in both light and dark themes
+- Respects `prefers-reduced-motion`: animations become short fades
 
-![demo](asset/liquid_lens_navbar_demo.gif)
+| Drag the lens | Swipe between modes | Live status |
+| :-: | :-: | :-: |
+| ![Dragging the lens across the bar opens popups](asset/lln-scrub.gif) | ![Swiping the bar up and down switches between two route sets](asset/lln-modes.gif) | ![Status dots, a pulsing icon and a live value readout](asset/lln-status.gif) |
+
 ![demo_images](asset/liquid_lens_navbar_collage.png)
 
 > Built for and tested against Home Assistant's `sections` dashboard type,
@@ -87,7 +97,8 @@ but keeping it last avoids confusing the visual editor.
 
 | Option         | Type    | Required | Description                                                                                |
 | -------------- | ------- | -------- | ------------------------------------------------------------------------------------------- |
-| `routes`       | array   | yes      | The icons in the bar, in order. See below.                                                  |
+| `routes`       | array   | yes*     | The icons in the bar, in order. See below. *Not needed if `modes` is set.                   |
+| `modes`        | array   | no       | Several route sets you switch between by swiping the bar vertically. See [Modes](#modes).   |
 | `hide_labels`  | boolean | no       | Hide the text label under every icon (default: `false`, labels shown).                      |
 | `icon_size`    | number  | no       | Size in px of each icon (default: `24`).                                                    |
 | `item_gap`     | number  | no       | Gap in px between buttons in the bar (default: `4`). Raise this if icons are hard to hit accurately. |
@@ -224,6 +235,69 @@ Set `release_only: true` to disable hover-triggered navigation entirely —
 popups then only ever open when you lift your finger off an icon, never
 mid-drag. This overrides `hover_delay`.
 
+### Modes
+
+Use `modes` instead of `routes` to put several route sets into one bar.
+Swipe the bar **up** for the next mode, **down** for the previous one (it
+wraps around). While you swipe, the bar follows your finger with a little
+resistance; once you've pulled far enough, a short tick and a label with
+the target mode's name tell you that letting go will switch. The new icons
+morph in, the glass grows or shrinks to the new number of routes, and the
+dots above the bar show which mode is active.
+
+```yaml
+type: custom:liquid-lens-navbar-card
+modes:
+  - name: Home
+    routes:
+      - icon: mdi:lightbulb-group
+        label: Lights
+        tap_action: { action: navigate, navigation_path: "#lights-popup" }
+      - icon: mdi:thermostat
+        label: Climate
+        tap_action: { action: navigate, navigation_path: "#climate-popup" }
+      - icon: mdi:shield-home
+        label: Security
+        tap_action: { action: navigate, navigation_path: "#security-popup" }
+  - name: Tech
+    routes:
+      - icon: mdi:server
+        label: Server
+        tap_action: { action: navigate, navigation_path: "#server-popup" }
+        dots:
+          - color: "[[[ return states['binary_sensor.server_problem'].state === 'on' ? '#ff5252' : null; ]]]"
+      - icon: mdi:solar-power-variant
+        label: Energy
+        value_entity: sensor.solar_power
+        tap_action: { action: navigate, navigation_path: "#energy-popup" }
+      - icon: mdi:update
+        label: Updates
+        tap_action: { action: navigate, navigation_path: "#updates-popup" }
+        dots:
+          - color: "[[[ return Number(states['sensor.pending_updates'].state) > 0 ? '#ffa726' : null; ]]]"
+```
+
+| Mode option | Type   | Required | Description                                                                                       |
+| ----------- | ------ | -------- | -------------------------------------------------------------------------------------------------- |
+| `routes`    | array  | yes      | The routes of this mode — same route objects as above.                                             |
+| `name`      | string | no       | Shown briefly above the bar when switching to this mode.                                           |
+| `path`      | string | no       | A view path (e.g. `/my-dashboard/tech`). Switching to the mode navigates there, and opening that view switches to the mode. |
+
+- **The mode follows the URL.** If a popup or view that belongs to another
+  mode gets opened (by a link, a button elsewhere, browser back), the bar
+  switches to that mode, so the active route is always visible.
+- **Alerts in hidden modes stay visible.** A hidden mode's dot takes the
+  first status color returned by any `dots[].color` template of its
+  routes. Templates should therefore return `null` for "all fine" (as in
+  the example) and a color only when something needs attention —
+  otherwise the dot would glow all the time.
+- **Different modes for different people.** Two cards with
+  [visibility conditions](https://www.home-assistant.io/dashboards/cards/#showing-or-hiding-a-card-conditionally)
+  work well: a single-mode bar for the family and a two-mode bar (same
+  "Home" routes plus a "Tech" mode) for admins.
+- A plain `routes` config is simply one mode: no dots, no swipe, exactly
+  the behavior of earlier versions.
+
 ## Known limitations
 
 - **No real optical distortion.** The lens uses blur/saturation/brightness
@@ -237,6 +311,10 @@ mid-drag. This overrides `hover_delay`.
 - Every icon must have an entry in `routes`; there's no built-in "more"
   overflow menu for bars with many icons — either let the bar scroll (see
   above) or group related items into a single popup with sub-sections.
+- The card's styles are not scoped per instance, so two navbar cards with
+  *different* sizing options visible on the same page at the same time
+  share one set of sizes. Use one card with `modes`, or cards whose
+  visibility conditions never overlap.
 - Not tested with a fixed `header` bar or a dashboard using `type: masonry`
   (only `type: sections`).
 
@@ -270,6 +348,28 @@ only ever navigate on release. See
 [Navigation timing](#navigation-timing-hover_delay--release_only).
 
 ## Changelog
+
+### v1.6.0
+
+- **Modes**: new `modes` option — several route sets in one bar, switched
+  by swiping the bar up/down. Mode dots above the bar, a name toast, an
+  alert color on hidden modes' dots, optional `path` per mode, and the
+  mode follows the current URL. `routes` configs are unchanged.
+- **Smoother mode switch**: outgoing icons leave in the swipe direction
+  while the new ones spring in, and the glass morphs its width instead of
+  jumping. Rubber-band pull with a haptic tick and a preview of the
+  target mode once the swipe is far enough to switch.
+- **Liquid lens**: the lens now eases after the finger and squashes with
+  speed, glides onto the chosen icon on release, and no longer flashes up
+  on a quick tap. It is moved with `transform` and button positions are
+  measured once per drag instead of every frame (cheaper on phones).
+- **Sliding active pill**: one highlight slides between routes instead of
+  the highlight jumping from button to button.
+- **`prefers-reduced-motion`** is respected: short fades, no spring, no pulse.
+- **Fixes**: a route targeting `/view#popup` no longer lights up for every
+  popup on that view; a slow start of a vertical swipe no longer opens the
+  popup under the finger; window listeners are removed when the card
+  leaves the page; the mode label stays inside the card in the editor.
 
 ### v1.5.1
 
