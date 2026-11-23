@@ -28,6 +28,9 @@ displays that can't fit every route at once.
   up or down to switch, e.g. an everyday "Home" set and a "Tech" set. The
   glass morphs its width between them, and a dot above the bar lights up
   if something in a hidden mode needs attention. See [Modes](#modes)
+- **Peek** (new in 1.6.0): while the lens rests on an icon, a small glass
+  card above the bar shows that route's live summary (text and up to four
+  bars); letting go opens the full popup as usual. See [Peek](#peek)
 - If routes don't fit in the available width, the bar scrolls
   horizontally — drag the lens to the edge and it keeps auto-scrolling
 - Light haptic pulse (native on the Companion App, `navigator.vibrate`
@@ -36,11 +39,16 @@ displays that can't fit every route at once.
   in both light and dark themes
 - Respects `prefers-reduced-motion`: animations become short fades
 
-| Drag the lens | Swipe between modes | Live status |
-| :-: | :-: | :-: |
-| ![Dragging the lens across the bar opens popups](asset/lln-scrub.gif) | ![Swiping the bar up and down switches between two route sets](asset/lln-modes.gif) | ![Status dots, a pulsing icon and a live value readout](asset/lln-status.gif) |
+On a real dashboard:
 
+![demo](asset/liquid_lens_navbar_demo.gif)
 ![demo_images](asset/liquid_lens_navbar_collage.png)
+
+Feature close-ups (demo page, demo data):
+
+| Drag the lens | Peek | Swipe between modes | Live status |
+| :-: | :-: | :-: | :-: |
+| ![Dragging the lens across the bar opens popups](asset/lln-scrub.gif) | ![A mini overview card above the bar while the lens rests on an icon](asset/lln-peek.gif) | ![Swiping the bar up and down switches between two route sets](asset/lln-modes.gif) | ![Status dots, a pulsing icon and a live value readout](asset/lln-status.gif) |
 
 > Built for and tested against Home Assistant's `sections` dashboard type,
 > alongside [Bubble Card](https://github.com/Clooos/Bubble-Card) pop-ups
@@ -99,6 +107,7 @@ but keeping it last avoids confusing the visual editor.
 | -------------- | ------- | -------- | ------------------------------------------------------------------------------------------- |
 | `routes`       | array   | yes*     | The icons in the bar, in order. See below. *Not needed if `modes` is set.                   |
 | `modes`        | array   | no       | Several route sets you switch between by swiping the bar vertically. See [Modes](#modes).   |
+| `peek_delay`   | number  | no       | How long (ms) the lens must rest on an icon before its peek appears (default: `120`).      |
 | `hide_labels`  | boolean | no       | Hide the text label under every icon (default: `false`, labels shown).                      |
 | `icon_size`    | number  | no       | Size in px of each icon (default: `24`).                                                    |
 | `item_gap`     | number  | no       | Gap in px between buttons in the bar (default: `4`). Raise this if icons are hard to hit accurately. |
@@ -125,6 +134,7 @@ editor and click "Edit" instead of "Show code editor"). `hover_delay` and
 | `value_entity` | string | no       | An entity ID whose state (plus unit, if any) renders as a small live readout under the icon.             |
 | `value_color`  | string | no       | A CSS color, or a `[[[ ... ]]]` template, coloring the `value_entity` readout. Ignored without `value_entity`. |
 | `pulse`        | string | no       | A `[[[ ... ]]]` template returning a boolean. When true, the icon pulses (scale + fade) — e.g. for a triggered alarm. |
+| `peek`         | object | no       | Mini overview shown above the bar while the lens rests on this route. See [Peek](#peek).                 |
 
 ### `tap_action`
 
@@ -298,6 +308,49 @@ modes:
 - A plain `routes` config is simply one mode: no dots, no swipe, exactly
   the behavior of earlier versions.
 
+### Peek
+
+Give a route a `peek` and dragging across the bar becomes "look first":
+while the lens rests on that icon, a small glass card above the bar shows
+a live summary, with a little arrow pointing at the icon. Slide on and the
+card follows; let go and the route's popup opens as usual. Sliding off the
+bar (more than ~90px up in a single-mode bar) closes the peek without
+opening anything. A quick tap still opens the popup right away.
+
+```yaml
+- icon: mdi:lightbulb-group
+  label: Lights
+  tap_action: { action: navigate, navigation_path: "#lights-popup" }
+  peek:
+    text: >-
+      [[[ const on = Object.keys(states).filter((e) => e.startsWith('light.') && states[e].state === 'on');
+          return on.length ? on.length + ' on' : 'All off'; ]]]
+- icon: mdi:solar-power-variant
+  label: Energy
+  tap_action: { action: navigate, navigation_path: "#energy-popup" }
+  peek:
+    text: "[[[ return 'Solar ' + states['sensor.solar_power'].state + ' W'; ]]]"
+    bars:
+      - label: Solar
+        value: "[[[ return states['sensor.solar_power'].state; ]]]"
+        max: 2000
+        color: "#ffc857"
+      - label: Battery
+        value: "[[[ return states['sensor.battery_level'].state; ]]]"
+```
+
+| Peek option | Type   | Description                                                                                       |
+| ----------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `title`     | string | Heading of the card. Defaults to the route's `label`.                                              |
+| `icon`      | string | Icon next to the title. Defaults to the route's `icon` (and uses its `icon_color`).                |
+| `text`      | string | Summary text; `\n` starts a new line.                                                              |
+| `bars`      | array  | Up to four small bars: `{ label, value, max (default 100), color }`.                               |
+
+Every field may be a plain value or a `[[[ ... ]]]` template, and the card
+updates live while it is open. Routes with a `peek` never open their popup
+mid-drag (the peek takes that place); routes without one keep the normal
+`hover_delay` behavior. Peek pairs well with `release_only: true`.
+
 ## Known limitations
 
 - **No real optical distortion.** The lens uses blur/saturation/brightness
@@ -365,6 +418,9 @@ only ever navigate on release. See
   measured once per drag instead of every frame (cheaper on phones).
 - **Sliding active pill**: one highlight slides between routes instead of
   the highlight jumping from button to button.
+- **Peek**: optional `peek` per route — a live mini overview card above the
+  bar while the lens rests on an icon; releasing opens the popup as before.
+  New `peek_delay` option.
 - **`prefers-reduced-motion`** is respected: short fades, no spring, no pulse.
 - **Fixes**: a route targeting `/view#popup` no longer lights up for every
   popup on that view; a slow start of a vertical swipe no longer opens the

@@ -68,6 +68,11 @@
  * belongs to another mode switches to it. A plain `routes` config
  * keeps working exactly as before (it is simply one mode).
  *
+ * Also in v1.6.0: optional `peek` per route - while the lens rests on an
+ * icon, a small glass card above the bar shows a live summary of that
+ * route (text plus up to four bars, all templatable). Releasing opens
+ * the popup as before; routes with a peek don't open it mid-drag.
+ *
  * https://github.com/donsebby/liquid-lens-navbar-card
  * License: MIT
  */
@@ -237,6 +242,7 @@ class LiquidLensNavbarCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    if (this._peekVisible) this._fillPeek();
     this._updateIconColors();
     this._updateValues();
     this._updateEditMode();
@@ -642,6 +648,81 @@ class LiquidLensNavbarCard extends HTMLElement {
     }
   }
 
+  // ---- peek (mini overview while dragging) ---------------------------
+
+  // Shows the glass mini card above the bar for route `index` of the
+  // current mode, with its caret pointing at that route's icon.
+  _showPeek(index) {
+    const peek = this.querySelector('.lln-peek');
+    const route = this._routes()[index];
+    if (!peek || !route || !route.peek) return;
+    const wrap = this.querySelector('.lln-wrap');
+    if (wrap && wrap.classList.contains('lln-editmode')) return;
+    const changed = this._peekIndex !== index;
+    this._peekIndex = index;
+    this._fillPeek();
+    const btn = this.querySelector(`.lln-btn[data-index="${index}"]`);
+    if (btn) {
+      const peekRect = peek.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      const x = btnRect.left + btnRect.width / 2 - peekRect.left;
+      peek.style.setProperty('--lln-caret-x', `${Math.max(18, Math.min(peekRect.width - 18, x))}px`);
+    }
+    if (this._peekVisible && changed) {
+      // Already open on another route: a quick content nudge instead of
+      // closing and reopening the whole card.
+      peek.classList.remove('lln-peek-swap');
+      void peek.offsetWidth;
+      peek.classList.add('lln-peek-swap');
+    }
+    this._flashModeLabel(null);
+    peek.classList.add('lln-peek-on');
+    this._peekVisible = true;
+  }
+
+  _hidePeek() {
+    if (!this._peekVisible) return;
+    const peek = this.querySelector('.lln-peek');
+    if (peek) peek.classList.remove('lln-peek-on', 'lln-peek-swap');
+    this._peekVisible = false;
+    this._peekIndex = null;
+  }
+
+  // (Re)fills the visible peek from its route config - also on every
+  // hass update while it is open, so values stay live.
+  _fillPeek() {
+    const peek = this.querySelector('.lln-peek');
+    const route = this._peekIndex == null ? null : this._routes()[this._peekIndex];
+    if (!peek || !route || !route.peek || !this._hass) return;
+    const cfg = route.peek;
+    const text = (v) => (v == null || v === false ? '' : String(this._evalTemplate(v) ?? ''));
+    const iconEl = peek.querySelector('.lln-peek-icon');
+    const icon = this._evalTemplate(cfg.icon || route.icon);
+    if (icon) iconEl.setAttribute('icon', icon);
+    iconEl.style.color = (route.icon_color && this._evalTemplate(route.icon_color)) || '';
+    peek.querySelector('.lln-peek-title').textContent = text(cfg.title ?? route.label ?? '');
+    peek.querySelector('.lln-peek-text').textContent = text(cfg.text);
+
+    const bars = Array.isArray(cfg.bars) ? cfg.bars.slice(0, 4) : [];
+    const barsEl = peek.querySelector('.lln-peek-bars');
+    if (barsEl.childElementCount !== bars.length) {
+      barsEl.innerHTML = bars
+        .map(() => '<div class="lln-pbar"><span class="lln-pbar-label"></span><i><b></b></i></div>')
+        .join('');
+    }
+    bars.forEach((bar, i) => {
+      const el = barsEl.children[i];
+      const max = Number(this._evalTemplate(bar.max ?? 100)) || 100;
+      const value = Number(this._evalTemplate(bar.value));
+      const pct = Number.isFinite(value) ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+      el.querySelector('.lln-pbar-label').textContent = text(bar.label);
+      const fill = el.querySelector('b');
+      fill.style.width = `${pct}%`;
+      fill.style.background = (bar.color && this._evalTemplate(bar.color)) || '';
+    });
+    barsEl.style.display = bars.length ? '' : 'none';
+  }
+
   _markActiveModeDot() {
     this.querySelectorAll('.lln-mdot').forEach((dot) => {
       dot.classList.toggle('lln-mdot-on', Number(dot.dataset.mode) === this._modeIndex);
@@ -725,6 +806,7 @@ class LiquidLensNavbarCard extends HTMLElement {
     const lensWidth = this.config.lens_width ?? buttonSize + itemGap * 2;
     const maxWidthCss = this.config.max_width ? `${this.config.max_width}px` : 'calc(100vw - 32px)';
     const multiMode = this._modes.length > 1;
+    const hasPeek = this._modes.some((m) => m.routes.some((r) => r.peek));
     const spring = 'cubic-bezier(0.3, 1.3, 0.5, 1)';
 
     this.innerHTML = `
@@ -1001,6 +1083,114 @@ class LiquidLensNavbarCard extends HTMLElement {
           opacity: 1;
           transform: translate(-50%, 0) scale(1);
         }
+        /* Peek: mini overview card above the bar while the lens rests on
+           a route that has a \`peek\` config. */
+        .lln-peek {
+          position: absolute;
+          bottom: calc(100% + 10px);
+          left: 50%;
+          width: min(320px, calc(100vw - 32px));
+          box-sizing: border-box;
+          padding: 12px 16px 14px;
+          border-radius: 22px;
+          color: var(--primary-text-color, #fff);
+          background: color-mix(in srgb, var(--card-background-color, #1c1f28) 72%, transparent);
+          backdrop-filter: blur(22px) saturate(170%);
+          -webkit-backdrop-filter: blur(22px) saturate(170%);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+          opacity: 0;
+          transform: translate(-50%, 14px) scale(0.94);
+          transform-origin: var(--lln-caret-x, 50%) 100%;
+          pointer-events: none;
+          transition: opacity 0.18s ease, transform 0.34s ${spring};
+        }
+        .lln-peek.lln-peek-on {
+          opacity: 1;
+          transform: translate(-50%, 0) scale(1);
+        }
+        .lln-peek::after {
+          content: '';
+          position: absolute;
+          bottom: -6px;
+          left: var(--lln-caret-x, 50%);
+          width: 11px;
+          height: 11px;
+          margin-left: -6px;
+          transform: rotate(45deg);
+          background: inherit;
+          border-right: 1px solid rgba(255, 255, 255, 0.12);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+          border-bottom-right-radius: 3px;
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+          transition: left 0.3s ${spring};
+        }
+        .lln-peek.lln-peek-swap .lln-peek-head,
+        .lln-peek.lln-peek-swap .lln-peek-text {
+          animation: lln-peek-swap 0.24s ease;
+        }
+        @keyframes lln-peek-swap {
+          from { opacity: 0.2; transform: translateY(3px); }
+          to { opacity: 1; transform: none; }
+        }
+        .lln-peek-head {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 15px;
+          font-weight: 650;
+          letter-spacing: -0.01em;
+        }
+        .lln-peek-icon {
+          --mdc-icon-size: 20px;
+          display: inline-flex;
+        }
+        .lln-peek-text {
+          margin-top: 3px;
+          font-size: 13px;
+          line-height: 1.35;
+          opacity: 0.72;
+          white-space: pre-line;
+        }
+        .lln-peek-text:empty {
+          display: none;
+        }
+        .lln-peek-bars {
+          display: flex;
+          gap: 8px;
+          margin-top: 10px;
+        }
+        .lln-pbar {
+          flex: 1;
+          min-width: 0;
+        }
+        .lln-pbar-label {
+          display: block;
+          font-size: 10px;
+          opacity: 0.6;
+          margin-bottom: 4px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .lln-pbar-label:empty {
+          display: none;
+        }
+        .lln-pbar i {
+          display: block;
+          height: 7px;
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.12);
+          overflow: hidden;
+        }
+        .lln-pbar b {
+          display: block;
+          height: 100%;
+          border-radius: 6px;
+          background: var(--primary-color, #7c3aed);
+          transition: width 0.4s ${spring};
+        }
         @media (prefers-reduced-motion: reduce) {
           .lln-btn.lln-in-up,
           .lln-btn.lln-in-down {
@@ -1013,6 +1203,7 @@ class LiquidLensNavbarCard extends HTMLElement {
           .lln-btn.lln-pulsing ha-icon {
             animation: none;
           }
+          .lln-peek,
           .lln-pill,
           .lln-lens,
           .lln-lens.lln-settle,
@@ -1023,6 +1214,15 @@ class LiquidLensNavbarCard extends HTMLElement {
         }
       </style>
       <div class="lln-wrap">
+        ${
+          hasPeek
+            ? `<div class="lln-peek" aria-hidden="true">
+                 <div class="lln-peek-head"><ha-icon class="lln-peek-icon"></ha-icon><span class="lln-peek-title"></span></div>
+                 <div class="lln-peek-text"></div>
+                 <div class="lln-peek-bars"></div>
+               </div>`
+            : ''
+        }
         ${
           multiMode
             ? `<div class="lln-modelabel"></div>
@@ -1077,6 +1277,9 @@ class LiquidLensNavbarCard extends HTMLElement {
     const SWIPE_DETECT = 14;
     const SWIPE_SWITCH = 28;
     const HOVER_DWELL_MS = this.config.hover_delay ?? 130;
+    // A peek waits a moment so that sweeping across several icons doesn't
+    // flash a card for each; once one is open, moving on updates it at once.
+    const PEEK_DELAY_MS = this.config.peek_delay ?? 120;
     const RELEASE_ONLY = !!this.config.release_only;
 
     let pendingTimer = null;
@@ -1130,10 +1333,28 @@ class LiquidLensNavbarCard extends HTMLElement {
       if (idx !== lastHoverIndex) {
         lastHoverIndex = idx;
         clearPending();
-        if (idx !== null) {
+        if (idx === null) {
+          this._hidePeek();
+        } else {
           fireHaptic();
           pendingIndex = idx;
-          if (!RELEASE_ONLY) {
+          const hovered = this._routes()[idx];
+          if (hovered && hovered.peek) {
+            // Routes with a `peek` don't open their popup mid-drag: the
+            // lens shows the mini overview instead, and releasing opens
+            // the popup (pendingIndex stays set for stopDrag()).
+            const showPeek = () => {
+              const dy = Math.abs(pointerY - startY);
+              if (this._modes.length > 1 && dy > 4 && dy > Math.abs(pointerX - startX)) {
+                pendingTimer = setTimeout(showPeek, 60);
+                return;
+              }
+              pendingTimer = null;
+              this._showPeek(idx);
+            };
+            pendingTimer = setTimeout(showPeek, this._peekVisible ? 0 : PEEK_DELAY_MS);
+          } else if (!RELEASE_ONLY) {
+            this._hidePeek();
             const fire = () => {
               // A slow start of a mode swipe (mostly vertical, not yet
               // past SWIPE_DETECT) must not open the popup under the
@@ -1149,6 +1370,8 @@ class LiquidLensNavbarCard extends HTMLElement {
               if (route) this._handleAction(route);
             };
             pendingTimer = setTimeout(fire, HOVER_DWELL_MS);
+          } else {
+            this._hidePeek();
           }
         }
       }
@@ -1202,6 +1425,12 @@ class LiquidLensNavbarCard extends HTMLElement {
 
       if (swiping || tooFarVertically) {
         lens.classList.remove('active');
+        if (lastHoverIndex !== null) {
+          // Sliding off the bar while peeking means "just looking":
+          // releasing out there won't open the popup.
+          if (this._peekVisible) clearPending();
+          this._hidePeek();
+        }
         lastHoverIndex = null;
         lensX = null;
       } else {
@@ -1247,6 +1476,7 @@ class LiquidLensNavbarCard extends HTMLElement {
 
     const stopDrag = (cancelled) => {
       dragging = false;
+      this._hidePeek();
       if (rafId) cancelAnimationFrame(rafId);
       rafId = null;
       const releasedIndex = lastHoverIndex;
