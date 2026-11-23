@@ -447,10 +447,13 @@ for the active icon and its highlight pill (default: `--primary-color`).
 
 The look can also come from the theme for all Liquid Glass cards at once:
 set `lg-look: solid` in your Home Assistant theme (CSS variable `--lg-look`).
-As long as `--lln-bar-bg` is not set, the bar then becomes a calm solid
-surface (`--surface`, default the theme's card colour at 88 %), without
-blur, with a thin edge, and the active route takes the text colour
-(`--lln-accent` still wins). The lens keeps its glass while dragging. The
+The bar then becomes a calm solid surface (`--surface`, default the theme's
+card colour at 88 %), without blur, with a thin edge, and the active route
+takes the text colour. The drag lens becomes a flat, opaque pill in the same
+style as the active highlight (accent mixed into `--surface-solid`, soft
+shadow, no blur or gloss) and slides under the icons; mode label, mode dots
+and peek use the solid surface too. `--lln-bar-*` and `--lln-accent` still
+override their single property in both looks, they don't switch the look. The
 navbar has no `look:` of its own; on the other Liquid Glass cards `look:`
 overrides the theme per card. The variable is re-read when the theme or dark
 mode changes, or when the window event `lg-theme-changed` fires.
@@ -513,7 +516,8 @@ only ever navigate on release. See
 ## Changelog
 
 ### v1.8.0
-- The bar follows the theme-wide look: with `lg-look: solid` in the theme (and no `--lln-bar-bg`) it becomes a solid surface without blur, with a thin edge and the active route in the text colour. The blur also falls back to `--lg-backdrop`. Without the variables nothing changes.
+- The bar follows the theme-wide look: with `lg-look: solid` in the theme it becomes a solid surface without blur, with a thin edge and the active route in the text colour. The blur also falls back to `--lg-backdrop`. Without the variables nothing changes.
+- Solid look: the drag lens is a flat, opaque pill in the active-highlight style instead of glass (no blur, gloss or squash), mode label, mode dots and peek lose their blur, and the look is decided by `--lg-look` alone, so it also applies when the theme sets `--lln-bar-bg`.
 - The bar reads optional CSS variables, so a theme or an ambience card can give it a solid look: `--lln-bar-bg` (background), `--lln-bar-backdrop` (e.g. `none` to switch off the blur), `--lln-bar-border`, and `--lln-accent` for the active icon and its highlight pill (default: `--primary-color`). Without them nothing changes.
 
 ### v1.7.0

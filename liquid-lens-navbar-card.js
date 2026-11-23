@@ -310,15 +310,16 @@ class LiquidLensNavbarCard extends HTMLElement {
 
   // ---- look from the theme ---------------------------------------------
   // The navbar has no `look` option: with `--lg-look: solid` in the theme
-  // (theme YAML `lg-look: solid`) and no explicit `--lln-bar-bg`, the bar
-  // gets the solid look via the class `lln-solid` on .lln-wrap. Read on
+  // (theme YAML `lg-look: solid`) the bar gets the solid look via the class
+  // `lln-solid` on .lln-wrap. `--lln-bar-*` only override single properties
+  // and never decide the look. Read on
   // connect (plus one frame later, themes can apply after that), on a
   // hass.themes change and on the window event `lg-theme-changed`.
   _readThemeLook() {
     try {
       const cs = getComputedStyle(this);
       const look = cs.getPropertyValue('--lg-look').trim().replace(/^["']|["']$/g, '').trim().toLowerCase();
-      return look === 'solid' && !cs.getPropertyValue('--lln-bar-bg').trim();
+      return look === 'solid';
     } catch (e) {
       return false;
     }
@@ -1161,12 +1162,12 @@ class LiquidLensNavbarCard extends HTMLElement {
         .lln-scroll::-webkit-scrollbar {
           display: none;
         }
-        /* Theme look solid (--lg-look: solid, no --lln-bar-bg): a calm
-           solid bar like the solid Liquid Glass cards - no blur, a thin
-           edge, the active route in the text colour. Explicit --lln-bar-*
-           and --lln-accent variables still win. The lens stays. */
+        /* Theme look solid (--lg-look: solid): a calm solid bar like the
+           solid Liquid Glass cards - no blur, a thin edge, the active route
+           in the text colour. Explicit --lln-bar-* and --lln-accent
+           variables still win. The lens rules follow the glass lens below. */
         .lln-wrap.lln-solid .lln-scroll {
-          background: var(--surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 88%, transparent));
+          background: var(--lln-bar-bg, var(--surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 88%, transparent)));
           backdrop-filter: var(--lln-bar-backdrop, none);
           -webkit-backdrop-filter: var(--lln-bar-backdrop, none);
           border-color: var(--lln-bar-border, rgba(255, 255, 255, 0.08));
@@ -1358,6 +1359,28 @@ class LiquidLensNavbarCard extends HTMLElement {
         .lln-lens.lln-settle {
           transition: transform 0.26s ${spring}, opacity 0.22s ease 0.12s, scale 0.26s ease;
         }
+        /* Solid look: the lens is an opaque flat pill of the active pill's
+           family, raised a step - no blur, gloss or glass rim. It sits under
+           the icons (z-index 1, after the pill) so they stay crisp. */
+        .lln-wrap.lln-solid .lln-lens {
+          top: 8px;
+          height: ${buttonSize}px;
+          z-index: 1;
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+          border: 0;
+          background: color-mix(
+            in srgb,
+            var(--lln-accent, var(--primary-text-color, #fff)) 20%,
+            var(--surface-solid, var(--card-background-color, #1c1f28))
+          );
+          box-shadow:
+            inset 0 0 0 1px color-mix(in srgb, var(--lln-accent, var(--primary-text-color, #fff)) 28%, transparent),
+            0 4px 14px rgba(0, 0, 0, 0.22);
+        }
+        .lln-wrap.lln-solid .lln-lens.active {
+          scale: 1.04;
+        }
         .lln-modes {
           display: flex;
           gap: 5px;
@@ -1511,6 +1534,26 @@ class LiquidLensNavbarCard extends HTMLElement {
           border-radius: 6px;
           background: var(--primary-color, #7c3aed);
           transition: width 0.4s ${spring};
+        }
+        /* Solid look: mode dots, mode label and peek on the solid surface,
+           without blur or glass sheen. */
+        .lln-wrap.lln-solid .lln-modes {
+          background: var(--lln-bar-bg, var(--surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 88%, transparent)));
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+        }
+        .lln-wrap.lln-solid .lln-modelabel,
+        .lln-wrap.lln-solid .lln-peek {
+          background: var(--surface-solid, var(--card-background-color, #1c1f28));
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+          border-color: var(--lln-bar-border, rgba(255, 255, 255, 0.08));
+        }
+        .lln-wrap.lln-solid .lln-peek {
+          box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+        }
+        .lln-wrap.lln-solid .lln-peek::after {
+          border-color: var(--lln-bar-border, rgba(255, 255, 255, 0.08));
         }
         @media (prefers-reduced-motion: reduce) {
           .lln-btn.lln-in-up,
@@ -1767,7 +1810,8 @@ class LiquidLensNavbarCard extends HTMLElement {
         const prev = lensX;
         lensX = lensX === null || reduced ? target : lensX + (target - lensX) * 0.35;
         const velocity = prev === null ? 0 : lensX - prev;
-        const squash = reduced ? 0 : Math.min(Math.abs(velocity) * 0.012, 0.18);
+        // The solid lens is a flat pill: it glides, but doesn't squash.
+        const squash = reduced || this._solidLook ? 0 : Math.min(Math.abs(velocity) * 0.012, 0.18);
         lens.style.transform = `translate3d(${lensX}px, 0, 0) scale(${1 + squash}, ${1 - squash * 0.6})`;
 
         const moved = Math.abs(pointerX - startX) > LENS_SHOW_MOVE_PX;
