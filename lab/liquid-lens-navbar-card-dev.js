@@ -270,6 +270,15 @@ class LiquidLensNavbarCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Theme switch (new themes object, other theme or dark mode): the
+    // theme's --lg-look may have changed. Only then - never per tick.
+    const th = hass && hass.themes;
+    if (th !== this._themesRef || th?.theme !== this._themeName || th?.darkMode !== this._darkMode) {
+      this._themesRef = th;
+      this._themeName = th?.theme;
+      this._darkMode = th?.darkMode;
+      this._recheckThemeLook();
+    }
     this._refreshVisibility();
     if (this._peekVisible) this._fillPeek();
     this._updateIconColors();
@@ -288,12 +297,49 @@ class LiquidLensNavbarCard extends HTMLElement {
   // rendered in normal document flow instead, giving the editor real,
   // visible content to display and select.
   connectedCallback() {
+    if (!this._onThemeChanged) this._onThemeChanged = () => this._checkThemeLook();
+    window.addEventListener('lg-theme-changed', this._onThemeChanged);
+    this._recheckThemeLook();
     this._updateEditMode();
     if (this._rendered) this._attachNavListeners();
     // HA may detach/re-attach the card when switching views; the URL can
     // have changed in between, so re-pick the mode that matches it.
     this._syncModeToLocation();
     this._updateActiveRoute();
+  }
+
+  // ---- look from the theme ---------------------------------------------
+  // The navbar has no `look` option: with `--lg-look: solid` in the theme
+  // (theme YAML `lg-look: solid`) and no explicit `--lln-bar-bg`, the bar
+  // gets the solid look via the class `lln-solid` on .lln-wrap. Read on
+  // connect (plus one frame later, themes can apply after that), on a
+  // hass.themes change and on the window event `lg-theme-changed`.
+  _readThemeLook() {
+    try {
+      const cs = getComputedStyle(this);
+      const look = cs.getPropertyValue('--lg-look').trim().replace(/^["']|["']$/g, '').trim().toLowerCase();
+      return look === 'solid' && !cs.getPropertyValue('--lln-bar-bg').trim();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  _recheckThemeLook() {
+    this._checkThemeLook();
+    if (typeof requestAnimationFrame !== 'function' || this._lookRaf) return;
+    this._lookRaf = requestAnimationFrame(() => {
+      this._lookRaf = null;
+      this._checkThemeLook();
+    });
+  }
+
+  _checkThemeLook() {
+    if (!this.isConnected) return;
+    const solid = this._readThemeLook();
+    if (solid === !!this._solidLook) return;
+    this._solidLook = solid;
+    const wrap = this.querySelector('.lln-wrap');
+    if (wrap) wrap.classList.toggle('lln-solid', solid);
   }
 
   // Element.closest() does not cross shadow-DOM boundaries, but Home
@@ -1102,8 +1148,8 @@ class LiquidLensNavbarCard extends HTMLElement {
           scroll-behavior: auto;
           border-radius: 999px;
           background: var(--lln-bar-bg, rgba(255, 255, 255, 0.02));
-          backdrop-filter: var(--lln-bar-backdrop, blur(12px) saturate(180%));
-          -webkit-backdrop-filter: var(--lln-bar-backdrop, blur(12px) saturate(180%));
+          backdrop-filter: var(--lln-bar-backdrop, var(--lg-backdrop, blur(12px) saturate(180%)));
+          -webkit-backdrop-filter: var(--lln-bar-backdrop, var(--lg-backdrop, blur(12px) saturate(180%)));
           border: 1px solid var(--lln-bar-border, rgba(255, 255, 255, 0.07));
           box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
           touch-action: none;
@@ -1114,6 +1160,23 @@ class LiquidLensNavbarCard extends HTMLElement {
         }
         .lln-scroll::-webkit-scrollbar {
           display: none;
+        }
+        /* Theme look solid (--lg-look: solid, no --lln-bar-bg): a calm
+           solid bar like the solid Liquid Glass cards - no blur, a thin
+           edge, the active route in the text colour. Explicit --lln-bar-*
+           and --lln-accent variables still win. The lens stays. */
+        .lln-wrap.lln-solid .lln-scroll {
+          background: var(--surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 88%, transparent));
+          backdrop-filter: var(--lln-bar-backdrop, none);
+          -webkit-backdrop-filter: var(--lln-bar-backdrop, none);
+          border-color: var(--lln-bar-border, rgba(255, 255, 255, 0.08));
+        }
+        .lln-wrap.lln-solid .lln-btn.lln-btn-active {
+          color: var(--lln-accent, var(--primary-text-color));
+        }
+        .lln-wrap.lln-solid .lln-pill {
+          background: color-mix(in srgb, var(--lln-accent, var(--primary-text-color, #fff)) 16%, transparent);
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lln-accent, var(--primary-text-color, #fff)) 22%, transparent);
         }
         /* Vertical swipe feedback: the bar follows the finger, rubber-band style. */
         .lln-scroll.lln-swiping {
@@ -1471,7 +1534,7 @@ class LiquidLensNavbarCard extends HTMLElement {
           }
         }
       </style>
-      <div class="lln-wrap">
+      <div class="lln-wrap${this._solidLook ? ' lln-solid' : ''}">
         ${
           hasPeek
             ? `<div class="lln-peek" aria-hidden="true">
@@ -1880,6 +1943,9 @@ class LiquidLensNavbarCard extends HTMLElement {
 
   disconnectedCallback() {
     this._detachNavListeners();
+    if (this._onThemeChanged) window.removeEventListener('lg-theme-changed', this._onThemeChanged);
+    if (this._lookRaf) cancelAnimationFrame(this._lookRaf);
+    this._lookRaf = null;
     clearTimeout(this._labelTimer);
     clearTimeout(this._morphTimer);
     clearTimeout(this._settleTimer);
