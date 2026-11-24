@@ -1,4 +1,9 @@
-# 🧊 Liquid Lens Navbar Card
+# Lens Navbar Card
+
+> Formerly **Liquid Lens Navbar Card**. Since v2.0.0 the card type is
+> `custom:lens-navbar-card`; the old type `custom:liquid-lens-navbar-card`
+> keeps working as an alias, so existing dashboards need no change.
+> The look (glass or flat) now comes from your theme, see [Look from the theme](#look-from-the-theme).
 
 A bottom navigation bar for Home Assistant dashboards with an **iOS-26-style
 "liquid glass" lens** that follows your finger as you drag across the bar —
@@ -81,7 +86,7 @@ Feature close-ups (demo page, demo data):
 ## Basic usage
 
 ```yaml
-type: custom:liquid-lens-navbar-card
+type: custom:lens-navbar-card
 routes:
   - icon: mdi:lightbulb-group
     label: Lights
@@ -261,7 +266,7 @@ morph in, the glass grows or shrinks to the new number of routes, and the
 dots above the bar show which mode is active.
 
 ```yaml
-type: custom:liquid-lens-navbar-card
+type: custom:lens-navbar-card
 modes:
   - name: Home
     routes:
@@ -322,7 +327,7 @@ everyone: the family gets a plain bar, and the admin gets the same routes
 plus a second mode.
 
 ```yaml
-type: custom:liquid-lens-navbar-card
+type: custom:lens-navbar-card
 modes:
   - name: Home
     routes:
@@ -437,6 +442,32 @@ updates live while it is open. Routes with a `peek` never open their popup
 mid-drag (the peek takes that place); routes without one keep the normal
 `hover_delay` behavior. Peek pairs well with `release_only: true`.
 
+### Look from the theme
+
+The card brings structure, the theme brings the look. Since v2.0.0 the bar
+reads the variables of the **Pane** card family; set them in your Home
+Assistant theme (without the leading `--`):
+
+| Theme variable | What it does | Falls back to |
+|---|---|---|
+| `pane-effects` | `glass`: lens with refraction and gloss; `none`: flat, opaque lens and highlight, no sheen | `lg-look`, then `glass` |
+| `pane-surface` | bar background (also mode dots, peek) | built-in default |
+| `pane-blur` | blur radius behind the bar, e.g. `16px` (`0px` = none) | `12px` |
+| `pane-backdrop` | full `backdrop-filter`, wins over `pane-blur` | `lg-backdrop` |
+| `pane-border` | thin edge colour | built-in default |
+| `pane-accent` | active icon and its highlight pill | `primary-color` |
+
+The card-specific variables `--lln-bar-bg`, `--lln-bar-backdrop`,
+`--lln-bar-border` and `--lln-accent` still work and win over the Pane
+variables. The values are re-read when the theme or dark mode changes, or
+when the window event `lg-theme-changed` fires.
+
+```yaml
+# in your Home Assistant theme: frosted bar, flat lens
+pane-effects: none
+pane-blur: 18px
+```
+
 ### Solid look
 
 The bar's surface comes from the theme, there is no card option for it.
@@ -514,6 +545,11 @@ only ever navigate on release. See
 [Navigation timing](#navigation-timing-hover_delay--release_only).
 
 ## Changelog
+
+### v2.0.0
+- New name: **Lens Navbar Card**, card type `custom:lens-navbar-card`. The old type `custom:liquid-lens-navbar-card` keeps working as an alias.
+- The look comes from the theme via the Pane family variables: `pane-effects` (`glass` or `none`), `pane-surface`, `pane-blur`, `pane-backdrop`, `pane-border`, `pane-accent` (see *Look from the theme*). `--lln-*` variables still win; `lg-look: solid` still works when `pane-effects` is not set.
+- Without any of the variables the bar looks exactly as in v1.8.0.
 
 ### v1.8.0
 - The bar follows the theme-wide look: with `lg-look: solid` in the theme it becomes a solid surface without blur, with a thin edge and the active route in the text colour. The blur also falls back to `--lg-backdrop`. Without the variables nothing changes.
