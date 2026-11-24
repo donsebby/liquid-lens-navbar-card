@@ -1,15 +1,12 @@
 name: Validate
 
 # HACS checks the repository the same way the default catalog does
-# (description, topics, hacs.json, release, README). Runs daily as well,
-# so a broken setting shows up before a catalog review does.
+# (description, topics, hacs.json, release, README).
 
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
