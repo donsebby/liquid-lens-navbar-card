@@ -88,7 +88,7 @@
  * like a plain `routes` bar. Conditions are re-checked on hass updates,
  * but the buttons are only rebuilt when the visible set really changes.
  *
- * https://github.com/donsebby/liquid-lens-navbar-card (to be renamed lens-navbar-card)
+ * https://github.com/donsebby/lens-navbar-card
  * License: MIT
  */
 
