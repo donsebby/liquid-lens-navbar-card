@@ -1,6 +1,13 @@
 /**
- * Liquid Lens Navbar Card
- * ------------------------
+ * Lens Navbar Card (formerly Liquid Lens Navbar Card)
+ * ----------------------------------------------------
+ * v2.0.0: part of the "Pane" card family - the card brings structure, the
+ * theme brings the look. The bar reads the Pane theme variables
+ * (--pane-surface, --pane-blur, --pane-backdrop, --pane-border,
+ * --pane-accent) and `--pane-effects: none` switches off the glass lens
+ * and sheen. The card type is now `lens-navbar-card-dev`; the old type
+ * `liquid-lens-navbar-card-dev` keeps working as an alias.
+ *
  * A bottom navigation bar for Home Assistant dashboards with an
  * iOS-26-style "liquid glass" lens that follows your finger as you
  * drag across the bar, plus optional per-route status dots, a live
@@ -81,11 +88,11 @@
  * like a plain `routes` bar. Conditions are re-checked on hass updates,
  * but the buttons are only rebuilt when the visible set really changes.
  *
- * https://github.com/donsebby/liquid-lens-navbar-card-dev
+ * https://github.com/donsebby/liquid-lens-navbar-card-dev (to be renamed lens-navbar-card-dev)
  * License: MIT
  */
 
-const CARD_VERSION = '1.8.0-dev';
+const CARD_VERSION = '2.0.0-dev';
 
 // Unknown `visibility` condition types are treated as "visible" (so a
 // typo or a newer Lovelace condition never hides a route for good), but
@@ -100,37 +107,37 @@ console.info(
   'color: #7c3aed; background: white; font-weight: 700;'
 );
 
-class LiquidLensNavbarCard extends HTMLElement {
+class LensNavbarCard extends HTMLElement {
   // Accepts either a single `routes` array (the classic config) or a
   // `modes` array of `{ name, path?, routes }` objects. Internally both
   // are normalized to a list of modes, so everything below only ever
   // deals with "the routes of the current mode" via this._routes().
   setConfig(config) {
-    if (!config) throw new Error('liquid-lens-navbar-card-dev: missing config');
+    if (!config) throw new Error('lens-navbar-card-dev: missing config');
     let modes;
     if (Array.isArray(config.modes) && config.modes.length > 0) {
       modes = config.modes;
     } else if (Array.isArray(config.routes) && config.routes.length > 0) {
       modes = [{ routes: config.routes }];
     } else {
-      throw new Error('liquid-lens-navbar-card-dev: "routes" (or "modes") must be a non-empty array');
+      throw new Error('lens-navbar-card-dev: "routes" (or "modes") must be a non-empty array');
     }
     // A typo like `visibility: admin` would otherwise silently count as
     // "no conditions" and show an admin route to everyone.
     const checkVisibility = (vis, where) => {
       if (vis != null && typeof vis !== 'object') {
-        throw new Error(`liquid-lens-navbar-card-dev: ${where}.visibility must be a list of conditions`);
+        throw new Error(`lens-navbar-card-dev: ${where}.visibility must be a list of conditions`);
       }
     };
     modes.forEach((mode, mi) => {
       if (!mode || !Array.isArray(mode.routes) || mode.routes.length === 0) {
-        throw new Error(`liquid-lens-navbar-card-dev: modes[${mi}].routes must be a non-empty array`);
+        throw new Error(`lens-navbar-card-dev: modes[${mi}].routes must be a non-empty array`);
       }
       checkVisibility(mode.visibility, `modes[${mi}]`);
       mode.routes.forEach((route, ri) => {
         const where = config.modes ? `modes[${mi}].routes[${ri}]` : `routes[${ri}]`;
         if (!route.icon) {
-          throw new Error(`liquid-lens-navbar-card-dev: ${where} is missing "icon"`);
+          throw new Error(`lens-navbar-card-dev: ${where} is missing "icon"`);
         }
         checkVisibility(route.visibility, where);
       });
@@ -158,7 +165,7 @@ class LiquidLensNavbarCard extends HTMLElement {
   // Lovelace UI card picker, instead of an empty/invalid config.
   static getStubConfig() {
     return {
-      type: 'custom:liquid-lens-navbar-card-dev',
+      type: 'custom:lens-navbar-card-dev',
       hide_labels: false,
       routes: [
         { icon: 'mdi:home', label: 'Home', tap_action: { action: 'navigate', navigation_path: '/lovelace/0' } },
@@ -315,11 +322,16 @@ class LiquidLensNavbarCard extends HTMLElement {
   // and never decide the look. Read on
   // connect (plus one frame later, themes can apply after that), on a
   // hass.themes change and on the window event `lg-theme-changed`.
+  // v2.0.0: `--pane-effects` (glass | none) decides first; the older
+  // `--lg-look: solid` still works when it is not set.
   _readThemeLook() {
     try {
       const cs = getComputedStyle(this);
-      const look = cs.getPropertyValue('--lg-look').trim().replace(/^["']|["']$/g, '').trim().toLowerCase();
-      return look === 'solid';
+      const read = (n) => cs.getPropertyValue(n).trim().replace(/^["']|["']$/g, '').trim().toLowerCase();
+      const fx = read('--pane-effects');
+      if (fx === 'none' || fx === 'flat') return true;
+      if (fx === 'glass') return false;
+      return read('--lg-look') === 'solid';
     } catch (e) {
       return false;
     }
@@ -494,7 +506,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         return this._hass.formatEntityState(stateObj);
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.warn('liquid-lens-navbar-card-dev: formatEntityState failed, falling back to raw state', err);
+        console.warn('lens-navbar-card-dev: formatEntityState failed, falling back to raw state', err);
       }
     }
     const unit = stateObj.attributes && stateObj.attributes.unit_of_measurement ? stateObj.attributes.unit_of_measurement : '';
@@ -530,7 +542,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         fn = new Function('states', 'hass', match[1]);
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error('liquid-lens-navbar-card-dev: template compile error', err);
+        console.error('lens-navbar-card-dev: template compile error', err);
         fn = null;
       }
       this._templateFnCache.set(template, fn);
@@ -540,7 +552,7 @@ class LiquidLensNavbarCard extends HTMLElement {
       return fn(this._hass.states, this._hass);
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('liquid-lens-navbar-card-dev: template error', err);
+      console.error('lens-navbar-card-dev: template error', err);
       return null;
     }
   }
@@ -797,7 +809,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         if (!LLN_WARNED_CONDITIONS.has(type)) {
           LLN_WARNED_CONDITIONS.add(type);
           // eslint-disable-next-line no-console
-          console.warn(`liquid-lens-navbar-card-dev: visibility condition "${type}" is not supported, treating it as visible`);
+          console.warn(`lens-navbar-card-dev: visibility condition "${type}" is not supported, treating it as visible`);
         }
         return true;
     }
@@ -1118,6 +1130,12 @@ class LiquidLensNavbarCard extends HTMLElement {
           min-height: 66px;
         }
         .lln-wrap {
+          /* Card variables (--lln-*) win over the Pane family variables
+             (--pane-*); unset both and the fixed defaults below apply. */
+          --lln-x-bg: var(--lln-bar-bg, var(--pane-surface));
+          --lln-x-backdrop: var(--lln-bar-backdrop, var(--pane-backdrop));
+          --lln-x-border: var(--lln-bar-border, var(--pane-border));
+          --lln-x-accent: var(--lln-accent, var(--pane-accent));
           position: fixed;
           bottom: 16px;
           left: 50%;
@@ -1148,10 +1166,10 @@ class LiquidLensNavbarCard extends HTMLElement {
           overscroll-behavior-x: contain;
           scroll-behavior: auto;
           border-radius: 999px;
-          background: var(--lln-bar-bg, rgba(255, 255, 255, 0.02));
-          backdrop-filter: var(--lln-bar-backdrop, var(--lg-backdrop, blur(12px) saturate(180%)));
-          -webkit-backdrop-filter: var(--lln-bar-backdrop, var(--lg-backdrop, blur(12px) saturate(180%)));
-          border: 1px solid var(--lln-bar-border, rgba(255, 255, 255, 0.07));
+          background: var(--lln-x-bg, rgba(255, 255, 255, 0.02));
+          backdrop-filter: var(--lln-x-backdrop, var(--lg-backdrop, blur(var(--pane-blur, 12px)) saturate(180%)));
+          -webkit-backdrop-filter: var(--lln-x-backdrop, var(--lg-backdrop, blur(var(--pane-blur, 12px)) saturate(180%)));
+          border: 1px solid var(--lln-x-border, rgba(255, 255, 255, 0.07));
           box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
           touch-action: none;
           -webkit-user-select: none;
@@ -1167,17 +1185,17 @@ class LiquidLensNavbarCard extends HTMLElement {
            in the text colour. Explicit --lln-bar-* and --lln-accent
            variables still win. The lens rules follow the glass lens below. */
         .lln-wrap.lln-solid .lln-scroll {
-          background: var(--lln-bar-bg, var(--surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 88%, transparent)));
-          backdrop-filter: var(--lln-bar-backdrop, none);
-          -webkit-backdrop-filter: var(--lln-bar-backdrop, none);
-          border-color: var(--lln-bar-border, rgba(255, 255, 255, 0.08));
+          background: var(--lln-x-bg, var(--surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 88%, transparent)));
+          backdrop-filter: var(--lln-x-backdrop, none);
+          -webkit-backdrop-filter: var(--lln-x-backdrop, none);
+          border-color: var(--lln-x-border, rgba(255, 255, 255, 0.08));
         }
         .lln-wrap.lln-solid .lln-btn.lln-btn-active {
-          color: var(--lln-accent, var(--primary-text-color));
+          color: var(--lln-x-accent, var(--primary-text-color));
         }
         .lln-wrap.lln-solid .lln-pill {
-          background: color-mix(in srgb, var(--lln-accent, var(--primary-text-color, #fff)) 16%, transparent);
-          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lln-accent, var(--primary-text-color, #fff)) 22%, transparent);
+          background: color-mix(in srgb, var(--lln-x-accent, var(--primary-text-color, #fff)) 16%, transparent);
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lln-x-accent, var(--primary-text-color, #fff)) 22%, transparent);
         }
         /* Vertical swipe feedback: the bar follows the finger, rubber-band style. */
         .lln-scroll.lln-swiping {
@@ -1218,7 +1236,7 @@ class LiquidLensNavbarCard extends HTMLElement {
           background: rgba(255, 255, 255, 0.08);
         }
         .lln-btn.lln-btn-active {
-          color: var(--lln-accent, var(--primary-color, #7c3aed));
+          color: var(--lln-x-accent, var(--primary-color, #7c3aed));
         }
         .lln-btn ha-icon {
           --mdc-icon-size: ${iconSize}px;
@@ -1238,8 +1256,8 @@ class LiquidLensNavbarCard extends HTMLElement {
           width: ${buttonSize}px;
           height: ${buttonSize}px;
           border-radius: 999px;
-          background: color-mix(in srgb, var(--lln-accent, var(--primary-color, #7c3aed)) 16%, transparent);
-          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lln-accent, var(--primary-color, #7c3aed)) 22%, transparent);
+          background: color-mix(in srgb, var(--lln-x-accent, var(--primary-color, #7c3aed)) 16%, transparent);
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lln-x-accent, var(--primary-color, #7c3aed)) 22%, transparent);
           opacity: 0;
           scale: 0.6;
           pointer-events: none;
@@ -1371,11 +1389,11 @@ class LiquidLensNavbarCard extends HTMLElement {
           border: 0;
           background: color-mix(
             in srgb,
-            var(--lln-accent, var(--primary-text-color, #fff)) 20%,
+            var(--lln-x-accent, var(--primary-text-color, #fff)) 20%,
             var(--surface-solid, var(--card-background-color, #1c1f28))
           );
           box-shadow:
-            inset 0 0 0 1px color-mix(in srgb, var(--lln-accent, var(--primary-text-color, #fff)) 28%, transparent),
+            inset 0 0 0 1px color-mix(in srgb, var(--lln-x-accent, var(--primary-text-color, #fff)) 28%, transparent),
             0 4px 14px rgba(0, 0, 0, 0.22);
         }
         .lln-wrap.lln-solid .lln-lens.active {
@@ -1538,7 +1556,7 @@ class LiquidLensNavbarCard extends HTMLElement {
         /* Solid look: mode dots, mode label and peek on the solid surface,
            without blur or glass sheen. */
         .lln-wrap.lln-solid .lln-modes {
-          background: var(--lln-bar-bg, var(--surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 88%, transparent)));
+          background: var(--lln-x-bg, var(--surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 88%, transparent)));
           backdrop-filter: none;
           -webkit-backdrop-filter: none;
         }
@@ -1547,13 +1565,13 @@ class LiquidLensNavbarCard extends HTMLElement {
           background: var(--surface-solid, var(--card-background-color, #1c1f28));
           backdrop-filter: none;
           -webkit-backdrop-filter: none;
-          border-color: var(--lln-bar-border, rgba(255, 255, 255, 0.08));
+          border-color: var(--lln-x-border, rgba(255, 255, 255, 0.08));
         }
         .lln-wrap.lln-solid .lln-peek {
           box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
         }
         .lln-wrap.lln-solid .lln-peek::after {
-          border-color: var(--lln-bar-border, rgba(255, 255, 255, 0.08));
+          border-color: var(--lln-x-border, rgba(255, 255, 255, 0.08));
         }
         @media (prefers-reduced-motion: reduce) {
           .lln-btn.lln-in-up,
@@ -2031,11 +2049,14 @@ class LiquidLensNavbarCard extends HTMLElement {
   }
 }
 
-if (!customElements.get('liquid-lens-navbar-card-dev')) customElements.define('liquid-lens-navbar-card-dev', LiquidLensNavbarCard);
+customElements.define('lens-navbar-card-dev', LensNavbarCard);
+// The old card type keeps working (same card, own element name).
+class LiquidLensNavbarCard extends LensNavbarCard {}
+customElements.define('liquid-lens-navbar-card-dev', LiquidLensNavbarCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: 'liquid-lens-navbar-card-dev',
-  name: 'Liquid Lens Navbar Card',
-  description: 'A bottom navbar with an iOS-26-style liquid glass lens that follows your finger, plus per-route status dots, a live value readout, JS-templated icon symbols/colors/pulse, a persistent active-route highlight, a scrollable bar with snap-into-view, hover-delayed (or release-only) popup navigation to stay smooth on fast swipes, multiple route sets (modes) you switch by swiping the bar up or down, and per-user or per-state visibility for routes and modes. Sizing options have a visual editor.',
+  type: 'lens-navbar-card-dev',
+  name: 'Lens Navbar Card (Dev)',
+  description: 'A bottom navbar with a lens that follows your finger (glass or flat, from the theme), plus per-route status dots, a live value readout, JS-templated icon symbols/colors/pulse, a persistent active-route highlight, a scrollable bar with snap-into-view, hover-delayed (or release-only) popup navigation to stay smooth on fast swipes, multiple route sets (modes) you switch by swiping the bar up or down, and per-user or per-state visibility for routes and modes. Sizing options have a visual editor.',
 });
