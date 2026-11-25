@@ -1456,10 +1456,11 @@ class LensNavbarCard extends HTMLElement {
           padding: 12px 16px 14px;
           border-radius: 22px;
           color: var(--primary-text-color, #fff);
-          background: color-mix(in srgb, var(--card-background-color, #1c1f28) 72%, transparent);
-          backdrop-filter: blur(22px) saturate(170%);
-          -webkit-backdrop-filter: blur(22px) saturate(170%);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          /* Follows the theme's surface like the bar does (--lln-peek-bg wins). */
+          background: var(--lln-peek-bg, var(--pane-surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 72%, transparent)));
+          backdrop-filter: var(--lln-x-backdrop, blur(22px) saturate(170%));
+          -webkit-backdrop-filter: var(--lln-x-backdrop, blur(22px) saturate(170%));
+          border: 1px solid var(--lln-x-border, rgba(255, 255, 255, 0.12));
           box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
           opacity: 0;
           transform: translate(-50%, 14px) scale(0.94);
@@ -1481,8 +1482,8 @@ class LensNavbarCard extends HTMLElement {
           margin-left: -6px;
           transform: rotate(45deg);
           background: inherit;
-          border-right: 1px solid rgba(255, 255, 255, 0.12);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+          border-right: 1px solid var(--lln-x-border, rgba(255, 255, 255, 0.12));
+          border-bottom: 1px solid var(--lln-x-border, rgba(255, 255, 255, 0.12));
           border-bottom-right-radius: 3px;
           backdrop-filter: none;
           -webkit-backdrop-filter: none;
