@@ -92,7 +92,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = '2.0.1-dev';
+const CARD_VERSION = '2.0.2-dev';
 
 // Unknown `visibility` condition types are treated as "visible" (so a
 // typo or a newer Lovelace condition never hides a route for good), but
@@ -1458,8 +1458,8 @@ class LensNavbarCard extends HTMLElement {
           color: var(--primary-text-color, #fff);
           /* Follows the theme's surface like the bar does (--lln-peek-bg wins). */
           background: var(--lln-peek-bg, var(--pane-surface, color-mix(in srgb, var(--card-background-color, #1c1f28) 72%, transparent)));
-          backdrop-filter: var(--lln-x-backdrop, blur(22px) saturate(170%));
-          -webkit-backdrop-filter: var(--lln-x-backdrop, blur(22px) saturate(170%));
+          backdrop-filter: var(--lln-peek-backdrop, var(--lln-x-backdrop, blur(22px) saturate(170%)));
+          -webkit-backdrop-filter: var(--lln-peek-backdrop, var(--lln-x-backdrop, blur(22px) saturate(170%)));
           border: 1px solid var(--lln-x-border, rgba(255, 255, 255, 0.12));
           box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
           opacity: 0;
@@ -1567,6 +1567,13 @@ class LensNavbarCard extends HTMLElement {
           backdrop-filter: none;
           -webkit-backdrop-filter: none;
           border-color: var(--lln-x-border, rgba(255, 255, 255, 0.08));
+        }
+        /* --lln-peek-bg / --lln-peek-backdrop win in every look, so a theme or
+           card can put the peek on the same glass as its popups. */
+        .lln-wrap.lln-solid .lln-peek {
+          background: var(--lln-peek-bg, var(--surface-solid, var(--card-background-color, #1c1f28)));
+          backdrop-filter: var(--lln-peek-backdrop, none);
+          -webkit-backdrop-filter: var(--lln-peek-backdrop, none);
         }
         .lln-wrap.lln-solid .lln-peek {
           box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
