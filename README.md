@@ -462,6 +462,11 @@ The card-specific variables `--lln-bar-bg`, `--lln-bar-backdrop`,
 variables. The values are re-read when the theme or dark mode changes, or
 when the window event `lg-theme-changed` fires.
 
+The peek (the mini overview while the lens rests on a route) follows
+`pane-surface` and the bar's blur and edge. `--lln-peek-bg` and
+`--lln-peek-backdrop` set it on their own and win in every look, also in
+the solid one, e.g. to put the peek on the same glass as your popups.
+
 ```yaml
 # in your Home Assistant theme: frosted bar, flat lens
 pane-effects: none
@@ -545,6 +550,10 @@ only ever navigate on release. See
 [Navigation timing](#navigation-timing-hover_delay--release_only).
 
 ## Changelog
+
+### v2.0.1
+- The peek follows the theme surface (`pane-surface`) with the bar's blur and edge instead of a grey, opaque card colour.
+- New optional variables `--lln-peek-bg` and `--lln-peek-backdrop` for the peek; they also apply in the solid look.
 
 ### v2.0.0
 - New name: **Lens Navbar Card**, card type `custom:lens-navbar-card`. The old type `custom:liquid-lens-navbar-card` keeps working as an alias.
